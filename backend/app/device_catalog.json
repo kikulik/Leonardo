@@ -1,0 +1,20 @@
+[
+  {
+    "code": "camera_basic",
+    "name": "Basic Camera",
+    "role": "camera",
+    "ports": [
+      {"id": "SDI Output 1", "family": "SDI", "direction": "Output", "index": 1}
+    ]
+  },
+  {
+    "code": "switcher_4k",
+    "name": "4K Production Switcher",
+    "role": "switcher",
+    "ports": [
+      {"id": "SDI Input 1", "family": "SDI", "direction": "Input", "index": 1},
+      {"id": "SDI Input 2", "family": "SDI", "direction": "Input", "index": 2},
+      {"id": "SDI Output 1", "family": "SDI", "direction": "Output", "index": 1}
+    ]
+  }
+]
