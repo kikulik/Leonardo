@@ -1,0 +1,5 @@
+*.safetensors filter=lfs diff=lfs merge=lfs -text
+*.pt filter=lfs diff=lfs merge=lfs -text
+*.json,[[:space:]]*.bin,[[:space:]]*.pth,[[:space:]]*.jinja,[[:space:]]*.md,[[:space:]]*.model filter=lfs diff=lfs merge=lfs -text
+tokenizer.model filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text
