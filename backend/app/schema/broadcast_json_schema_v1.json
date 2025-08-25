@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "devices",
+    "connections",
+    "policy"
+  ],
+  "properties": {
+    "devices": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "ports"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "camera",
+              "switcher",
+              "router",
+              "monitor",
+              "recorder",
+              "encoder",
+              "decoder",
+              "embedder",
+              "distribution_amp",
+              "ccu",
+              "multiviewer",
+              "sync",
+              "framesync",
+              "other"
+            ]
+          },
+          "ports": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "family",
+                "direction",
+                "index"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "family": {
+                  "type": "string",
+                  "enum": [
+                    "HDMI",
+                    "12GSDI",
+                    "6GSDI",
+                    "3GSDI",
+                    "HDSDI",
+                    "SDI",
+                    "IP2110",
+                    "NDI",
+                    "AES/EBU",
+                    "ANALOG",
+                    "MADI",
+                    "ASI",
+                    "REF",
+                    "PTP"
+                  ]
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "Input",
+                    "Output",
+                    "Input/Output"
+                  ]
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "signal_type"
+        ],
+        "properties": {
+          "from": {
+            "type": "object",
+            "required": [
+              "device_id",
+              "port_id"
+            ],
+            "properties": {
+              "device_id": {
+                "type": "string"
+              },
+              "port_id": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "to": {
+            "type": "object",
+            "required": [
+              "device_id",
+              "port_id"
+            ],
+            "properties": {
+              "device_id": {
+                "type": "string"
+              },
+              "port_id": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "signal_type": {
+            "type": "string",
+            "enum": [
+              "HDMI",
+              "12GSDI",
+              "6GSDI",
+              "3GSDI",
+              "HDSDI",
+              "SDI",
+              "IP2110",
+              "NDI",
+              "AES/EBU",
+              "ANALOG",
+              "MADI",
+              "ASI",
+              "REF",
+              "PTP"
+            ]
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "policy": {
+      "type": "string",
+      "enum": [
+        "prefer-hdmi",
+        "sdi-only",
+        "mixed-allowed"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}
