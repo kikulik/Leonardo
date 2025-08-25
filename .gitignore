@@ -1,0 +1,8 @@
+/backend/.venv/
+/frontend/node_modules/
+/dist/
+*.log
+__pycache__/
+.vscode/
+.idea/
+*.swp
