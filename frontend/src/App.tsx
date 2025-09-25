@@ -1,35 +1,35 @@
 import React, { useState } from "react";
 import DeviceCatalog from "./components/DeviceCatalog";
 import Chat from "./components/Chat";
+import { Canvas } from "./components/Canvas";
 import { api } from "./lib/api";
 
 /**
- * Pro UI shell inspired by your LeonardoAI.html:
+ * Pro UI shell:
  * - Dark gradient background
  * - Left tools sidebar
- * - Center canvas area (placeholder for now)
+ * - Center canvas area (renders graph JSON)
  * - Right properties panel (collapsible)
  * - Bottom AI command bar
- * Tailwind is already configured in your project.
  */
 
 export default function App() {
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [aiPrompt, setAiPrompt] = useState("");
+  const [graph, setGraph] = useState<any>(null); // holds { devices, connections? }
 
-  // TODO: wire to your real canvas + state
   const handleRunAi = async () => {
     const prompt = aiPrompt.trim();
     if (!prompt) return;
 
     try {
-      // Call backend /generate via Nginx proxy
+      // Call backend /generate via Nginx proxy (/api/generate)
       const result = await api.generate(prompt);
 
-      // For now, just log the JSON; next step we'll render it.
       console.log("GENERATE result:", result);
+      setGraph(result); // <-- render on canvas
 
-      // Tiny visual confirmation
+      // Tiny confirmation
       alert("Generate OK. Check console for JSON.");
     } catch (err: any) {
       console.error(err);
@@ -40,11 +40,13 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen text-white"
+    <div
+      className="min-h-screen text-white"
       style={{
         background:
           "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)",
-      }}>
+      }}
+    >
       {/* Top bar */}
       <header className="h-14 border-b border-slate-700/60 px-4 flex items-center justify-between backdrop-blur">
         <div className="flex items-center gap-2">
@@ -123,24 +125,18 @@ export default function App() {
         {/* Center canvas */}
         <main className="relative">
           <div className="absolute inset-0">
-            {/* Canvas placeholder box; replace with your real Canvas */}
-            <div className="m-4 h-[calc(100%-2rem)] rounded-2xl border border-slate-700 bg-slate-900/40 grid place-items-center">
-              <div className="text-slate-400">
-                Canvas goes here (drag devices, draw connections, etc.)
-              </div>
-            </div>
+            <Canvas graph={graph} />
           </div>
         </main>
 
         {/* Right properties (collapsible) */}
         <aside
-          className={`border-l border-slate-700/60 p-4 overflow-y-auto transition-all duration-200 ${showRightPanel ? "opacity-100" : "opacity-0 pointer-events-none"
-            }`}
+          className={`border-l border-slate-700/60 p-4 overflow-y-auto transition-all duration-200 ${
+            showRightPanel ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
         >
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-slate-200">
-              Properties
-            </h3>
+            <h3 className="text-sm font-semibold text-slate-200">Properties</h3>
             <button
               onClick={() => setShowRightPanel((v) => !v)}
               className="text-slate-300 hover:text-white text-sm"
@@ -188,4 +184,3 @@ export default function App() {
     </div>
   );
 }
-
