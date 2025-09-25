@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   backend:
     build:
@@ -14,11 +12,12 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: leonardo-frontend
     depends_on:
       - backend
     ports:
-      - "80:80"              # app will be at http://<server-ip>/
+      - "80:80"
     restart: unless-stopped
+

@@ -1,6 +1,7 @@
-# Build stage: compile the React app
+# Build stage: compile the React/Vite app
 FROM node:20-alpine AS build
 WORKDIR /app
+RUN apk add --no-cache python3 make g++     # 👈 add build tools (for native deps like esbuild/sharp)
 COPY package*.json ./
 RUN npm ci
 COPY . .

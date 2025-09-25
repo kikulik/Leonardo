@@ -1,8 +1,7 @@
 import React from 'react';
 import { Canvas } from './components/Canvas';
-import { DeviceCatalog
-       } from './components/DeviceCatalog';
-import { Chat } from './components/Chat';
+import DeviceCatalog from './components/DeviceCatalog';
+import Chat from './components/Chat';
 
 function App() {
   return (
