@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import DeviceCatalog from "./components/DeviceCatalog";
 import Chat from "./components/Chat";
+import { api } from "./lib/api";
 
 /**
  * Pro UI shell inspired by your LeonardoAI.html:
@@ -17,20 +18,33 @@ export default function App() {
   const [aiPrompt, setAiPrompt] = useState("");
 
   // TODO: wire to your real canvas + state
-  const handleRunAi = () => {
-    if (!aiPrompt.trim()) return;
-    // In the current backend design you’ll call /api/generate later.
-    // For now we just log the prompt.
-    console.log("AI prompt:", aiPrompt);
-    setAiPrompt("");
+  const handleRunAi = async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt) return;
+
+    try {
+      // Call backend /generate via Nginx proxy
+      const result = await api.generate(prompt);
+
+      // For now, just log the JSON; next step we'll render it.
+      console.log("GENERATE result:", result);
+
+      // Tiny visual confirmation
+      alert("Generate OK. Check console for JSON.");
+    } catch (err: any) {
+      console.error(err);
+      alert(`Generate failed: ${err.message || err}`);
+    } finally {
+      setAiPrompt("");
+    }
   };
 
   return (
     <div className="min-h-screen text-white"
-         style={{
-           background:
-             "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)",
-         }}>
+      style={{
+        background:
+          "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)",
+      }}>
       {/* Top bar */}
       <header className="h-14 border-b border-slate-700/60 px-4 flex items-center justify-between backdrop-blur">
         <div className="flex items-center gap-2">
@@ -120,9 +134,8 @@ export default function App() {
 
         {/* Right properties (collapsible) */}
         <aside
-          className={`border-l border-slate-700/60 p-4 overflow-y-auto transition-all duration-200 ${
-            showRightPanel ? "opacity-100" : "opacity-0 pointer-events-none"
-          }`}
+          className={`border-l border-slate-700/60 p-4 overflow-y-auto transition-all duration-200 ${showRightPanel ? "opacity-100" : "opacity-0 pointer-events-none"
+            }`}
         >
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-slate-200">
