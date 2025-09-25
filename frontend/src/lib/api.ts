@@ -22,11 +22,11 @@ export async function getCatalog() {
 }
 
 export async function generate(instruction: string) {
-  // POST /generate → model returns graph JSON
-  // Backend expects { instruction }, we keep it minimal for now.
+  // Some versions expect `prompt`, others `instruction`.
+  // Send both with the same value for max compatibility.
   return http("/generate", {
     method: "POST",
-    body: JSON.stringify({ instruction }),
+    body: JSON.stringify({ prompt: instruction, instruction }),
   });
 }
 
