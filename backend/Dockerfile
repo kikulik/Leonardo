@@ -20,5 +20,5 @@ COPY backend/Leonardo ./backend/Leonardo
 # (main.py builds the path to ../../Test.py). :contentReference[oaicite:1]{index=1}
 COPY Test.py ./Test.py
 
-EXPOSE 8000
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 10001
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "10001"]
