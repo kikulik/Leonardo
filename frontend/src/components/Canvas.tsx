@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphState } from "../lib/editor";
-import { clampZoom } from "../lib/editor";
+import { clampZoom, nextConnectionIdFor } from "../lib/editor";
 
 type Device = GraphState["devices"][number];
 
@@ -50,7 +50,7 @@ export function Canvas({
       return { ...d, x, y, w: d.w ?? BOX_W, h: d.h ?? BOX_H };
     });
 
-    // make "world" comfortably large so grid never looks clipped
+    // large world so grid looks infinite
     const minW = 3000;
     const minH = 2000;
     const contentW =
@@ -65,6 +65,10 @@ export function Canvas({
     };
   }, [devices]);
 
+  function centerOf(d: Device) {
+    return { cx: (d.x ?? 0) + (d.w ?? BOX_W) / 2, cy: (d.y ?? 0) + (d.h ?? BOX_H) / 2 };
+  }
+
   // ---- dragging device state ----
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<{
@@ -75,11 +79,6 @@ export function Canvas({
     origY: number;
   } | null>(null);
 
-  function centerOf(d: Device) {
-    return { cx: (d.x ?? 0) + (d.w ?? BOX_W) / 2, cy: (d.y ?? 0) + (d.h ?? BOX_H) / 2 };
-  }
-
-  // global mouse handlers while dragging device
   useEffect(() => {
     function onMove(e: MouseEvent) {
       if (!drag || !graph || !onChange) return;
@@ -159,6 +158,55 @@ export function Canvas({
     return { left, right };
   };
 
+  // ---- link (connection) interaction ----
+  type PortRef = { deviceId: string; portName: string; direction: "IN" | "OUT"; x: number; y: number };
+  const [linkFrom, setLinkFrom] = useState<PortRef | null>(null);
+  const [mouse, setMouse] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // convert screen coords to world coords (inverse of pan/zoom)
+  const screenToWorld = (clientX: number, clientY: number) => {
+    const rect = (wrapRef.current as HTMLDivElement).getBoundingClientRect();
+    const sx = clientX - rect.left - pan.x;
+    const sy = clientY - rect.top - pan.y;
+    return { x: sx / zoom, y: sy / zoom };
+  };
+
+  const startLink = (ref: PortRef) => setLinkFrom(ref);
+
+  const finishLinkIfValid = (to: PortRef) => {
+    if (!graph || !onChange || !linkFrom) return;
+    // enforce OUT -> IN (either direction start)
+    const a = linkFrom.direction;
+    const b = to.direction;
+    const from = a === "OUT" ? linkFrom : to;
+    const dest = a === "OUT" ? to : linkFrom;
+    if (from.direction !== "OUT" || dest.direction !== "IN") return; // invalid
+
+    // prevent self-connection same port
+    if (from.deviceId === dest.deviceId && from.portName === dest.portName) return;
+
+    const id = nextConnectionIdFor(graph);
+    const next = {
+      ...graph,
+      connections: [
+        ...graph.connections,
+        {
+          id,
+          from: { deviceId: from.deviceId, portName: from.portName },
+          to: { deviceId: dest.deviceId, portName: dest.portName },
+        },
+      ],
+    };
+    onChange(next);
+  };
+
+  // track mouse for temp link
+  const onMouseMoveWorld: React.MouseEventHandler<HTMLDivElement> = (e) => {
+    if (!wrapRef.current) return;
+    const w = screenToWorld(e.clientX, e.clientY);
+    setMouse(w);
+  };
+
   return (
     <div
       ref={wrapRef}
@@ -171,10 +219,10 @@ export function Canvas({
       <div
         className="w-full h-full relative"
         onMouseDown={onMouseDownWorld}
+        onMouseMove={onMouseMoveWorld}
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: "0 0",
-          // Infinite-looking grid by CSS gradients; it scales with zoom because it's on the world
           backgroundImage: showGrid
             ? `
                 linear-gradient(to right, rgba(148,163,184,0.12) 1px, transparent 1px),
@@ -188,7 +236,7 @@ export function Canvas({
         <div style={{ width, height, position: "relative" }}>
           {/* connections */}
           <svg width={width} height={height} className="absolute inset-0 pointer-events-none">
-            {(graph?.connections ?? []).map((c, i) => {
+            {(graph?.connections ?? []).map((c) => {
               const a = deviceMap.get(c.from.deviceId);
               const b = deviceMap.get(c.to.deviceId);
               if (!a || !b) return null;
@@ -196,7 +244,7 @@ export function Canvas({
               const B = centerOf(b);
               return (
                 <line
-                  key={i}
+                  key={c.id}
                   x1={A.cx}
                   y1={A.cy}
                   x2={B.cx}
@@ -206,6 +254,18 @@ export function Canvas({
                 />
               );
             })}
+            {/* temp link while dragging */}
+            {linkFrom && (
+              <line
+                x1={linkFrom.x}
+                y1={linkFrom.y}
+                x2={mouse.x}
+                y2={mouse.y}
+                stroke="rgba(251,191,36,0.9)"
+                strokeDasharray="4 4"
+                strokeWidth={2}
+              />
+            )}
           </svg>
 
           {/* devices */}
@@ -213,7 +273,9 @@ export function Canvas({
             const isSel = d.id === selectedId;
             const w = d.w ?? BOX_W;
             const h = d.h ?? BOX_H;
-            const { left, right } = getPortsBySide(d);
+            const ports = d.ports ?? [];
+            const left = ports.filter((p: any) => p.direction === "IN");
+            const right = ports.filter((p: any) => p.direction === "OUT");
 
             return (
               <div
@@ -232,10 +294,14 @@ export function Canvas({
                   e.stopPropagation();
                   onSelect?.(d.id);
                 }}
+                onMouseUp={() => {
+                  // stop linking if mouse up on body (cancel)
+                  setLinkFrom(null);
+                }}
               >
-                {/* Header */}
-                <div className="px-3 pt-2 text-sm font-medium text-slate-100 truncate">
-                  {d.customName ?? d.id}
+                {/* Header shows **Device ID** */}
+                <div className="px-3 pt-2 text-sm font-semibold text-slate-100 truncate">
+                  {d.id}
                 </div>
                 <div className="px-3 text-[11px] text-slate-400 flex gap-2">
                   <span>{d.type ?? "device"}</span>
@@ -251,9 +317,33 @@ export function Canvas({
                 <div className="absolute left-0 top-0 bottom-0 w-3">
                   {left.map((p: any, idx: number) => {
                     const y = ((idx + 1) * h) / (left.length + 1);
+                    const pr: any = {
+                      deviceId: d.id,
+                      portName: p.name,
+                      direction: "IN" as const,
+                      x: (d.x ?? 0), // approximate pin center
+                      y: (d.y ?? 0) + y,
+                    };
                     return (
-                      <div key={p.name} className="absolute -left-[6px]" style={{ top: y - 4 }}>
-                        <div className="w-2 h-2 rounded-full bg-emerald-400 border border-emerald-300" title={`${p.name} (${p.type})`} />
+                      <div
+                        key={p.name}
+                        className="absolute -left-[6px]"
+                        style={{ top: y - 4 }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          // Allow starting from IN too; direction check done at finish
+                          setLinkFrom(pr);
+                        }}
+                        onMouseUp={(e) => {
+                          e.stopPropagation();
+                          if (linkFrom) {
+                            finishLinkIfValid(pr);
+                            setLinkFrom(null);
+                          }
+                        }}
+                        title={`${p.name} (${p.type})`}
+                      >
+                        <div className="w-2 h-2 rounded-full bg-emerald-400 border border-emerald-300" />
                       </div>
                     );
                   })}
@@ -262,9 +352,32 @@ export function Canvas({
                 <div className="absolute right-0 top-0 bottom-0 w-3">
                   {right.map((p: any, idx: number) => {
                     const y = ((idx + 1) * h) / (right.length + 1);
+                    const pr: any = {
+                      deviceId: d.id,
+                      portName: p.name,
+                      direction: "OUT" as const,
+                      x: (d.x ?? 0) + w,
+                      y: (d.y ?? 0) + y,
+                    };
                     return (
-                      <div key={p.name} className="absolute -right-[6px]" style={{ top: y - 4 }}>
-                        <div className="w-2 h-2 rounded-full bg-sky-400 border border-sky-300" title={`${p.name} (${p.type})`} />
+                      <div
+                        key={p.name}
+                        className="absolute -right-[6px]"
+                        style={{ top: y - 4 }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          setLinkFrom(pr); // start link from OUT
+                        }}
+                        onMouseUp={(e) => {
+                          e.stopPropagation();
+                          if (linkFrom) {
+                            finishLinkIfValid(pr);
+                            setLinkFrom(null);
+                          }
+                        }}
+                        title={`${p.name} (${p.type})`}
+                      >
+                        <div className="w-2 h-2 rounded-full bg-sky-400 border border-sky-300" />
                       </div>
                     );
                   })}
@@ -277,7 +390,7 @@ export function Canvas({
 
       {/* small hint overlay */}
       <div className="absolute bottom-2 left-3 text-[11px] text-slate-400 bg-black/30 px-2 py-1 rounded">
-        Wheel = Zoom • Right-drag = Pan • Click = Select • Drag = Move • Ports: IN=left, OUT=right
+        Wheel = Zoom • Right-drag = Pan • Click = Select • Drag = Move • Drag OUT → IN to connect
       </div>
     </div>
   );
