@@ -24,29 +24,28 @@ type Props = {
 
 const BOX_W = 160;
 const BOX_H = 80;
-const HEADER_H = 36; // a bit taller to fit manufacturer/model
-const PORT_D = 8; // dot size (px)
+const HEADER_H = 36;
+const PORT_D = 8;
 const PORT_R = PORT_D / 2;
+// Keep pins slightly inside the box so they visually touch it
+const PIN_INSET = 6;
 
-// Port center in WORLD coords, matching the absolute pin placement below
+// Port center in WORLD coords (matches the visual pin positions exactly)
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const w = device.w ?? BOX_W;
   const h = device.h ?? BOX_H;
   const INs = (device.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (device.ports ?? []).filter((p) => p.direction === "OUT");
 
+  const yFor = (idx: number, total: number) =>
+    (device.y ?? 0) + HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
+
   if (dir === "IN") {
     const idx = INs.findIndex((p) => p.name === portName);
-    const y = (device.y ?? 0) + HEADER_H + ((idx + 1) * (h - HEADER_H)) / (INs.length + 1);
-    // Center should sit exactly on the left edge x
-    const x = (device.x ?? 0);
-    return { x, y };
+    return { x: (device.x ?? 0) + PIN_INSET, y: yFor(idx, INs.length) };
   } else {
     const idx = OUTs.findIndex((p) => p.name === portName);
-    const y = (device.y ?? 0) + HEADER_H + ((idx + 1) * (h - HEADER_H)) / (OUTs.length + 1);
-    // Center should sit exactly on the right edge x + w
-    const x = (device.x ?? 0) + w;
-    return { x, y };
+    return { x: (device.x ?? 0) + w - PIN_INSET, y: yFor(idx, OUTs.length) };
   }
 }
 
@@ -135,7 +134,7 @@ export function Canvas({
     } else if (p.direction === "IN" && pending) {
       const next = addConnection(graph, pending.from, { deviceId: d.id, portName: p.name });
       onChange(next);
-      setPending(null); // boom!
+      setPending(null);
     }
   }
 
@@ -237,8 +236,7 @@ export function Canvas({
           const INs = (d.ports ?? []).filter(p => p.direction === "IN");
           const OUTs = (d.ports ?? []).filter(p => p.direction === "OUT");
 
-          // helper to compute the vertical center for index
-          const vCenter = (idx: number, total: number) =>
+          const yFor = (idx: number, total: number) =>
             HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
 
           return (
@@ -275,7 +273,7 @@ export function Canvas({
                 });
               }}
             >
-              {/* header (taller; now includes manufacturer + model) */}
+              {/* header */}
               <div className="px-2 py-1.5 border-b border-white/10" style={{ background: "rgba(0,0,0,0.15)", height: HEADER_H }}>
                 <div className="text-[12px] flex items-center justify-between">
                   <div className="font-medium truncate">{d.customName ?? d.id}</div>
@@ -286,45 +284,63 @@ export function Canvas({
                 </div>
               </div>
 
-              {/* ports area uses exact math; pins are absolutely positioned */}
+              {/* ports area */}
               <div className="relative w-full" style={{ height: `calc(100% - ${HEADER_H}px)` }}>
                 {/* IN pins (left) */}
                 {INs.map((p, idx) => {
-                  const cy = vCenter(idx, INs.length);
+                  const cy = yFor(idx, INs.length);
                   return (
-                    <div
-                      key={p.name}
-                      title={`${p.type} IN: ${p.name}`}
-                      className="absolute cursor-crosshair"
-                      style={{
-                        left: -PORT_R, // center exactly on left edge
-                        top: cy - PORT_R,
-                        width: PORT_D, height: PORT_D,
-                      }}
-                      onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
-                    >
-                      <div className="w-full h-full rounded-full border border-emerald-300 bg-emerald-400 shadow-sm" />
-                    </div>
+                    <React.Fragment key={`IN-${idx}-${p.name}`}>
+                      {/* dot */}
+                      <div
+                        className="absolute cursor-crosshair"
+                        style={{
+                          left: PIN_INSET - PORT_R,
+                          top: cy - PORT_R,
+                          width: PORT_D, height: PORT_D,
+                        }}
+                        onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
+                        title={`${p.type} IN: ${p.name}`}
+                      >
+                        <div className="w-full h-full rounded-full border border-emerald-300 bg-emerald-400 shadow-sm" />
+                      </div>
+                      {/* label (inside, to the right of the pin) */}
+                      <div
+                        className="absolute pointer-events-none text-[10px] text-white/90"
+                        style={{ left: PIN_INSET + PORT_R + 6, top: cy - 7 }}
+                      >
+                        {p.name}
+                      </div>
+                    </React.Fragment>
                   );
                 })}
 
                 {/* OUT pins (right) */}
                 {OUTs.map((p, idx) => {
-                  const cy = vCenter(idx, OUTs.length);
+                  const cy = yFor(idx, OUTs.length);
                   return (
-                    <div
-                      key={p.name}
-                      title={`${p.type} OUT: ${p.name}`}
-                      className="absolute cursor-crosshair"
-                      style={{
-                        left: w - PORT_R, // center exactly on right edge
-                        top: cy - PORT_R,
-                        width: PORT_D, height: PORT_D,
-                      }}
-                      onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
-                    >
-                      <div className="w-full h-full rounded-full border border-sky-300 bg-sky-400 shadow-sm" />
-                    </div>
+                    <React.Fragment key={`OUT-${idx}-${p.name}`}>
+                      {/* dot */}
+                      <div
+                        className="absolute cursor-crosshair"
+                        style={{
+                          left: w - (PIN_INSET + PORT_R),
+                          top: cy - PORT_R,
+                          width: PORT_D, height: PORT_D,
+                        }}
+                        onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
+                        title={`${p.type} OUT: ${p.name}`}
+                      >
+                        <div className="w-full h-full rounded-full border border-sky-300 bg-sky-400 shadow-sm" />
+                      </div>
+                      {/* label (inside, to the left of the pin) */}
+                      <div
+                        className="absolute pointer-events-none text-[10px] text-white/90"
+                        style={{ right: PIN_INSET + PORT_R + 6, top: cy - 7 }}
+                      >
+                        {p.name}
+                      </div>
+                    </React.Fragment>
                   );
                 })}
               </div>
