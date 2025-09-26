@@ -5,7 +5,7 @@ export type PortDirection = "IN" | "OUT";
 export type PortType = string;
 
 export interface Port {
-  id: string;                 // stable id so editing names won't drop focus
+  id: string;
   name: string;
   type: PortType;
   direction: PortDirection;
@@ -27,13 +27,13 @@ export interface Device {
 
 export interface ConnectionEnd {
   deviceId: string;
-  portName: string;           // kept as name for backward compatibility
+  portName: string; // keep by name for compatibility
 }
 
 export interface Connection {
   id: string;
-  from: ConnectionEnd;        // must be OUT
-  to: ConnectionEnd;          // must be IN
+  from: ConnectionEnd; // OUT
+  to: ConnectionEnd;   // IN
 }
 
 export interface GraphState {
@@ -60,11 +60,6 @@ const TYPE_PREFIX: Record<string, string> = {
   "replay system": "SLO",
   monitors: "MON",
   monitor: "MON",
-  audio: "AUD",
-  converter: "CNV",
-  transmission: "TX",
-  sync: "SYNC",
-  patch_panels: "PATCH",
 };
 
 function uid(prefix = "p") {
@@ -100,7 +95,7 @@ export function normalizePorts(ports: Partial<Port>[]): Port[] {
     id: p.id || uid("port"),
     name: p.name || "PORT",
     type: (p.type || "GEN").toUpperCase(),
-    direction: (p.direction as PortDirection) || "IN",
+    direction: ((p.direction as PortDirection) || "IN"),
   }));
 }
 
@@ -148,26 +143,49 @@ export function addDevice(
   }
 ): GraphState {
   const {
-    type, count = 1, x = 80, y = 80,
+    type,
+    count = 1,
+    x = 80,
+    y = 80,
     w,
     h,
     color = "#334155",
     customNameBase,
     defaultPorts = [],
-    manufacturer, model,
+    manufacturer,
+    model,
   } = payload;
 
-  // --- Updated sizing logic to match HTML implementation ---
-  const normPorts = normalizePorts(defaultPorts);
-  const inputPorts = normPorts.filter(p => p.direction === "IN" || p.direction === "HYBRID");
-  const outputPorts = normPorts.filter(p => p.direction === "OUT" || p.direction === "HYBRID");
-  const maxPorts = Math.max(inputPorts.length, outputPorts.length);
+  const portsNorm = normalizePorts(defaultPorts);
+  const INs = portsNorm.filter((p) => p.direction === "IN");
+  const OUTs = portsNorm.filter((p) => p.direction === "OUT");
+  const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // Use HTML sizing approach: simple calculation based on port count
-  const autoH = Math.max(80, 60 + maxPorts * 20); // Base height + port spacing
-  const autoW = Math.max(160, 120); // Keep reasonable minimum width
-  
-  let draft = { ...state };
+  // Match Canvas sizing rules (header excluded from spacing)
+  const HEADER_H = 36;
+  const BODY_PAD_TOP = 15;
+  const BODY_PAD_BOTTOM = 15;
+  const PORT_FONT = 10;
+  const PIN_INSET = 7;
+
+  const minPortSpacing = 24;
+  const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
+  const autoH = Math.max(
+    80,
+    HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight
+  );
+
+  const CHAR_W = Math.ceil(PORT_FONT * 0.6);
+  const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const MIDDLE_GAP = 24;
+  const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
+  const autoW = Math.max(
+    160,
+    PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
+  );
+
+  let draft: GraphState = withPortIds({ ...state });
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
     draft = {
@@ -185,7 +203,7 @@ export function addDevice(
           customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
           manufacturer,
           model,
-          ports: normPorts,
+          ports: portsNorm,
         },
       ],
     };
@@ -208,10 +226,7 @@ export function deleteSelectedDevices(
   };
 }
 
-export function copySelectedDevices(
-  state: GraphState,
-  selectedIds: Set<string>
-) {
+export function copySelectedDevices(state: GraphState, selectedIds: Set<string>) {
   return state.devices
     .filter((d) => selectedIds.has(d.id))
     .map((d) => ({ ...d, ports: d.ports.map((p) => ({ ...p })) }));
@@ -242,8 +257,7 @@ export function pasteDevices(
   return draft;
 }
 
-// OUT may connect to only one IN; each IN accepts only one.
-// No device-to-device; it's strictly pin-to-pin.
+// Connections: OUT→IN only, no fan-out, no multi-in duplicates.
 export function addConnection(
   state: GraphState,
   from: ConnectionEnd,
@@ -258,7 +272,7 @@ export function addConnection(
   if (!fromPort || !toPort) return state;
   if (!(fromPort.direction === "OUT" && toPort.direction === "IN")) return state;
 
-  // forbid duplicates
+  // prevent duplicates
   const dupe = state.connections.some(
     (c) =>
       c.from.deviceId === from.deviceId &&
@@ -268,14 +282,13 @@ export function addConnection(
   );
   if (dupe) return state;
 
-  // forbid fan-out: OUT already used
+  // forbid fan-out on OUT
   const outUsed = state.connections.some(
-    (c) =>
-      c.from.deviceId === from.deviceId && c.from.portName === from.portName
+    (c) => c.from.deviceId === from.deviceId && c.from.portName === from.portName
   );
   if (outUsed) return state;
 
-  // forbid multi-in: IN already used
+  // forbid multiple connections into one IN
   const inUsed = state.connections.some(
     (c) => c.to.deviceId === to.deviceId && c.to.portName === to.portName
   );
