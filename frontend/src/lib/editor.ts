@@ -1,6 +1,5 @@
 // frontend/src/lib/editor.ts
 
-// ---------- Types ----------
 export type PortDirection = "IN" | "OUT";
 export type PortType = string;
 
@@ -14,10 +13,10 @@ export interface Port {
 export interface Device {
   id: string;
   type: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  x: number;     // BODY top-left X
+  y: number;     // BODY top-left Y
+  w: number;     // BODY width
+  h: number;     // BODY height
   color?: string;
   customName?: string;
   manufacturer?: string;
@@ -27,7 +26,7 @@ export interface Device {
 
 export interface ConnectionEnd {
   deviceId: string;
-  portName: string; // keep by name for compatibility
+  portName: string;
 }
 
 export interface Connection {
@@ -89,7 +88,6 @@ export function nextConnectionIdFor(state: GraphState) {
   return `CONN-${String(n + 1).padStart(4, "0")}`;
 }
 
-// Ensure every port has a stable id
 export function normalizePorts(ports: Partial<Port>[]): Port[] {
   return (ports || []).map((p) => ({
     id: p.id || uid("port"),
@@ -125,16 +123,16 @@ export function moveDevice(
   return { ...d, x: nx, y: ny };
 }
 
-// ---------- Mutators ----------
+// ---------- Mutators (BODY-only sizing; header not considered anywhere) ----------
 export function addDevice(
   state: GraphState,
   payload: {
     type: string;
     count?: number;
-    x?: number;
-    y?: number;
-    w?: number;
-    h?: number;
+    x?: number;  // BODY top-left X
+    y?: number;  // BODY top-left Y
+    w?: number;  // BODY width
+    h?: number;  // BODY height
     color?: string;
     customNameBase?: string;
     defaultPorts?: Partial<Port>[];
@@ -161,19 +159,15 @@ export function addDevice(
   const OUTs = portsNorm.filter((p) => p.direction === "OUT");
   const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // Match Canvas sizing rules (header excluded from spacing)
-  const HEADER_H = 36;
-  const BODY_PAD_TOP = 15;
-  const BODY_PAD_BOTTOM = 15;
+  // BODY-only sizing (no header)
   const PORT_FONT = 10;
   const PIN_INSET = 7;
+  const BODY_PAD_TOP = 15;
+  const BODY_PAD_BOTTOM = 15;
 
   const minPortSpacing = 24;
   const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
-  const autoH = Math.max(
-    80,
-    HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight
-  );
+  const autoH = Math.max(80, BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
 
   const CHAR_W = Math.ceil(PORT_FONT * 0.6);
   const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
