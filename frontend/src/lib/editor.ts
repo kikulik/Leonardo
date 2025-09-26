@@ -146,9 +146,24 @@ export function addDevice(
   }
 ): GraphState {
   const {
-    type, count = 1, x = 80, y = 80, w = 160, h = 80, color = "#334155",
-    customNameBase, defaultPorts = [], manufacturer, model,
+    type, count = 1, x = 80, y = 80,
+    w = 160,                          // width may be overridden by caller
+    h,                                 // we'll compute a minimum height if not provided
+    color = "#334155",
+    customNameBase, defaultPorts = [],
+    manufacturer, model,
   } = payload;
+
+  // compute auto-height from number of ports (max of IN/OUT) + 2 buffer "rows"
+  const normPorts = normalizePorts(defaultPorts);
+  const inCnt  = normPorts.filter(p => p.direction === "IN").length;
+  const outCnt = normPorts.filter(p => p.direction === "OUT").length;
+  const rows   = Math.max(inCnt, outCnt);
+  const BUFFER_ROWS = 2;         // <-- your "2 ports higher" buffer
+  const PER_ROW = 24;            // vertical spacing per pin
+  const HEADER = 36;
+  const PADDING = 12;            // top/bottom padding in the ports area
+  const autoH = HEADER + PADDING * 2 + Math.max(0, rows + BUFFER_ROWS - 1) * PER_ROW;
 
   let draft = { ...state };
   for (let i = 0; i < count; i++) {
@@ -158,16 +173,24 @@ export function addDevice(
       devices: [
         ...draft.devices,
         {
-          id, type, x: x + i * 40, y: y + i * 40, w, h, color,
+          id,
+          type,
+          x: x + i * 40,
+          y: y + i * 40,
+          w,
+          h: Math.max(h ?? 0, autoH, 80),  // ensure large enough for pins
+          color,
           customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
-          manufacturer, model,
-          ports: normalizePorts(defaultPorts),
+          manufacturer,
+          model,
+          ports: normPorts,
         },
       ],
     };
   }
   return draft;
 }
+
 
 export function deleteSelectedDevices(state: GraphState, selectedIds: Set<string>): GraphState {
   const keep = new Set(state.devices.filter(d => !selectedIds.has(d.id)).map(d => d.id));
