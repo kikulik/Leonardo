@@ -29,8 +29,8 @@ export interface ConnectionEnd {
 
 export interface Connection {
   id: string; // CONN-0001
-  from: ConnectionEnd;
-  to: ConnectionEnd;
+  from: ConnectionEnd; // must be OUT
+  to: ConnectionEnd;   // must be IN
 }
 
 export interface GraphState {
@@ -114,7 +114,9 @@ export function getAvailablePort(
   const ports = (device.ports ?? []).filter((p) => p.direction === direction);
   if (!ports.length) return undefined;
   if (preferType) {
-    const typed = ports.find((p) => p.type.toUpperCase() === preferType.toUpperCase());
+    const typed = ports.find(
+      (p) => p.type.toUpperCase() === preferType.toUpperCase()
+    );
     if (typed) return typed;
   }
   return ports[0];
@@ -140,39 +142,35 @@ export function addDevice(
   const {
     type,
     count = 1,
-    x = 80,
-    y = 80,
+    x = 100,
+    y = 100,
     w = 160,
     h = 80,
-    color = "#334155",
+    color = "#1f2937", // slate-800-ish default
     customNameBase,
     defaultPorts = [],
     manufacturer,
     model,
   } = payload;
 
-  let draft = { ...state };
+  let draft = { ...state, devices: [...state.devices], connections: [...state.connections] };
+
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
-    draft = {
-      ...draft,
-      devices: [
-        ...draft.devices,
-        {
-          id,
-          type,
-          x: x + i * 40,
-          y: y + i * 40,
-          w,
-          h,
-          color,
-          customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
-          manufacturer,
-          model,
-          ports: [...defaultPorts],
-        },
-      ],
+    const device: Device = {
+      id,
+      type,
+      x: x + i * 40,
+      y: y + i * 40,
+      w,
+      h,
+      color,
+      customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
+      manufacturer,
+      model,
+      ports: [...defaultPorts],
     };
+    draft.devices.push(device);
   }
   return draft;
 }
@@ -182,17 +180,16 @@ export function deleteSelectedDevices(
   selectedIds: Set<string>
 ): GraphState {
   const devices = state.devices.filter((d) => !selectedIds.has(d.id));
-  const removed = new Set(state.devices.filter((d) => selectedIds.has(d.id)).map((d) => d.id));
+  const removed = new Set(
+    state.devices.filter((d) => selectedIds.has(d.id)).map((d) => d.id)
+  );
   const connections = state.connections.filter(
     (c) => !removed.has(c.from.deviceId) && !removed.has(c.to.deviceId)
   );
   return { devices, connections };
 }
 
-export function copySelectedDevices(
-  state: GraphState,
-  selectedIds: Set<string>
-) {
+export function copySelectedDevices(state: GraphState, selectedIds: Set<string>) {
   return state.devices
     .filter((d) => selectedIds.has(d.id))
     .map((d) => ({ ...d, ports: [...(d.ports ?? [])] }));
@@ -203,22 +200,16 @@ export function pasteDevices(
   clipboard: Device[],
   offset = { x: 40, y: 40 }
 ): GraphState {
-  let draft = { ...state };
+  let draft = { ...state, devices: [...state.devices], connections: [...state.connections] };
   clipboard.forEach((d, i) => {
     const newId = nextDeviceIdForType(draft, d.type);
-    draft = {
-      ...draft,
-      devices: [
-        ...draft.devices,
-        {
-          ...d,
-          id: newId,
-          x: d.x + offset.x * (i + 1),
-          y: d.y + offset.y * (i + 1),
-          ports: [...(d.ports ?? [])],
-        },
-      ],
-    };
+    draft.devices.push({
+      ...d,
+      id: newId,
+      x: d.x + offset.x * (i + 1),
+      y: d.y + offset.y * (i + 1),
+      ports: [...(d.ports ?? [])],
+    });
   });
   return draft;
 }
