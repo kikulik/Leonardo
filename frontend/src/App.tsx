@@ -1,9 +1,8 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import DeviceCatalog from "./components/DeviceCatalog";
-import Chat from "./components/Chat";
 import { Canvas } from "./components/Canvas";
-import { api } from "./lib/api";
 import AddEquipmentModal from "./components/AddEquipmentModal";
+import { api } from "./lib/api";
 
 import {
   addDevice,
@@ -12,77 +11,143 @@ import {
   deleteSelectedDevices,
   saveProject,
   clampZoom,
+  TYPE_PREFIX,
   type GraphState,
   type Device,
 } from "./lib/editor";
 
-/**
- * v0.4
- * - Boxes show Device ID (e.g., CAM.01)
- * - Copy/Paste auto-increments ID by type (CAM.02…)
- * - OUT→IN port linking on Canvas
- */
+type Mode = "select" | "pan" | "connect";
 
 const LS_KEY = "leonardo.graph.v1";
 
 export default function App() {
-  const [showRightPanel, setShowRightPanel] = useState(true);
-  const [aiPrompt, setAiPrompt] = useState("");
+  // graph + selection
   const [graph, setGraph] = useState<GraphState>({ devices: [], connections: [] });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // UI state
+  const [showRightPanel, setShowRightPanel] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
+  const [mode, setMode] = useState<Mode>("select");
 
-  // Add modal
-  const [addOpen, setAddOpen] = useState(false);
-
-  // view (pan/zoom)
+  // view
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // clipboard for copy/paste
+  // clipboard + history
   const [clipboard, setClipboard] = useState<Device[]>([]);
+  const undoStack = useRef<GraphState[]>([]);
+  const redoStack = useRef<GraphState[]>([]);
+
+  // AI
+  const [aiPrompt, setAiPrompt] = useState("");
+
+  // add modal
+  const [addOpen, setAddOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- AI run (unchanged; normalize if needed) ---
-  const handleRunAi = async () => {
-    const prompt = aiPrompt.trim();
-    if (!prompt) return;
+  // ---------- helpers ----------
+  const pushHistory = (state: GraphState) => {
+    undoStack.current.push(state);
+    if (undoStack.current.length > 100) undoStack.current.shift();
+    redoStack.current = [];
+  };
+
+  const updateGraph = (next: GraphState) => {
+    setGraph((prev) => {
+      pushHistory(prev);
+      return next;
+    });
+  };
+
+  const onCanvasChange = (next: GraphState) => updateGraph(next);
+
+  const toggleSelect = (id: string, additive: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (additive) {
+        next.has(id) ? next.delete(id) : next.add(id);
+      } else {
+        next.clear();
+        next.add(id);
+      }
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // ---------- keyboard shortcuts ----------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Undo / Redo
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (undoStack.current.length) {
+          const prev = undoStack.current.pop()!;
+          redoStack.current.push(graph);
+          setGraph(prev);
+          setSelectedIds(new Set());
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
+        e.preventDefault();
+        if (redoStack.current.length) {
+          const nxt = redoStack.current.pop()!;
+          undoStack.current.push(graph);
+          setGraph(nxt);
+          setSelectedIds(new Set());
+        }
+        return;
+      }
+      // Copy / Paste
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        setClipboard(copySelectedDevices(graph, selectedIds));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        if (!clipboard.length) return;
+        updateGraph(pasteDevices(graph, clipboard));
+        return;
+      }
+      // Delete
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedIds.size) {
+          e.preventDefault();
+          updateGraph(deleteSelectedDevices(graph, selectedIds));
+          setSelectedIds(new Set());
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [graph, selectedIds, clipboard]);
+
+  // ---------- Save / Load ----------
+  const handleSaveFile = () => saveProject(graph, "project.json");
+  const handleLoadFileChoose = () => fileInputRef.current?.click();
+  const onFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
     try {
-      const result = await api.generate(prompt);
-      const next: GraphState = {
-        devices: (result.devices ?? result.nodes ?? []).map((d: any, i: number) => ({
-          id: d.id ?? d.name ?? `DEV.${i + 1}`,
-          type: d.type ?? d.role ?? "device",
-          manufacturer: d.manufacturer,
-          model: d.model,
-          customName: d.customName,
-          x: d.x ?? 0, y: d.y ?? 0,
-          w: d.w ?? 160, h: d.h ?? 80,
-          color: d.color,
-          ports: d.ports ?? [],
-        })),
-        connections: (result.connections ?? result.links ?? []).map((c: any, i: number) => ({
-          id: c.id ?? `CONN-${String(i + 1).padStart(4, "0")}`,
-          from: { deviceId: c.from?.deviceId ?? c.source ?? "", portName: c.from?.portName ?? "" },
-          to:   { deviceId: c.to?.deviceId ?? c.target ?? "", portName: c.to?.portName ?? "" },
-        })),
-      };
-      console.log("GENERATE result (normalized):", next);
-      setGraph(next);
-      setSelectedId(null);
-      alert("Generate OK. Check console for JSON.");
-    } catch (err: any) {
-      console.error(err);
-      alert(`Generate failed: ${err.message || err}`);
+      const text = await f.text();
+      setGraph(JSON.parse(text));
+      setSelectedIds(new Set());
+    } catch {
+      alert("Failed to load file.");
     } finally {
-      setAiPrompt("");
+      e.currentTarget.value = "";
     }
   };
 
-  // --- Canvas change handler (dragging updates x/y, etc.) ---
-  const handleGraphChange = (next: GraphState) => setGraph(next);
+  const resetView = () => {
+    setPan({ x: 0, y: 0 });
+    setZoom(1);
+  };
 
-  // --- Add Equipment submit ---
+  // ---------- Add Equipment ----------
   const handleAddSubmit = (p: {
     type: string; quantity: number; customNameBase?: string;
     manufacturer?: string; model?: string; w?: number; h?: number;
@@ -103,8 +168,8 @@ export default function App() {
     addPorts("IN", p.inPorts?.type, p.inPorts?.quantity);
     addPorts("OUT", p.outPorts?.type, p.outPorts?.quantity);
 
-    setGraph((g) =>
-      addDevice(g, {
+    updateGraph(
+      addDevice(graph, {
         type: p.type,
         count: p.quantity || 1,
         customNameBase: p.customNameBase,
@@ -118,99 +183,145 @@ export default function App() {
     setAddOpen(false);
   };
 
-  // --- Toolbar actions ---
-  const handleCopy = () => {
-    if (!selectedId) return;
-    setClipboard(copySelectedDevices(graph, new Set([selectedId])));
-  };
+  // ---------- Mock AI parser ----------
+  const parseAi = (text: string) => {
+    const t = text.trim().toLowerCase();
+    // examples:
+    //  "create 5 cameras"
+    //  "router"
+    //  "vision mixer 2"
+    // map phrases -> type key used in TYPE_PREFIX
+    const aliases: Record<string, string> = {
+      camera: "camera",
+      cameras: "camera",
+      router: "router",
+      "vision mixer": "vision mixer",
+      mixer: "vision mixer",
+      server: "server",
+      "camera control unit": "camera control unit",
+      ccu: "camera control unit",
+      embeder: "embeder",
+      embedder: "embeder",
+      encoder: "encoder",
+      "replay system": "replay system",
+      replay: "replay system",
+      monitor: "monitors",
+      monitors: "monitors",
+    };
 
-  const handlePaste = () => {
-    if (!clipboard.length) return;
-    // IDs will auto-increment by type on paste
-    setGraph((g) => pasteDevices(g, clipboard));
-  };
+    let qty = 1;
+    const mQty = t.match(/(?:\bcreate\b|\badd\b)?\s*(\d+)\s+/);
+    if (mQty) qty = Math.max(1, parseInt(mQty[1], 10));
 
-  const handleDelete = () => {
-    if (!selectedId) return;
-    setGraph((g) => deleteSelectedDevices(g, new Set([selectedId])));
-    setSelectedId(null);
-  };
-
-  const handleSaveFile = () => saveProject(graph, "project.json");
-  const handleLoadFileChoose = () => fileInputRef.current?.click();
-  const onFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    try {
-      const text = await f.text();
-      setGraph(JSON.parse(text));
-      setSelectedId(null);
-    } catch {
-      alert("Failed to load file.");
-    } finally {
-      e.currentTarget.value = "";
+    for (const k of Object.keys(aliases)) {
+      if (t.includes(k)) {
+        return { type: aliases[k], qty };
+      }
     }
+    // fallback: try last word
+    const last = t.split(/\s+/).pop() || "device";
+    return { type: aliases[last] || last, qty };
   };
 
-  const handleResetView = () => {
-    const devices = graph.devices.map(({ x, y, ...rest }) => rest as any);
-    setGraph({ ...graph, devices });
-    setSelectedId(null);
-    setPan({ x: 0, y: 0 });
-    setZoom(1);
-  };
+  const runAi = async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt) return;
 
-  // --- Properties panel (selected device) ---
-  const sel = selectedId ? graph.devices.find((d) => d.id === selectedId) : null;
+    // local mock: “create 5 cameras”, “router”, etc.
+    const { type, qty } = parseAi(prompt);
 
-  const updateSelectedDevice = (patch: Partial<Device>) => {
-    if (!sel) return;
-    setGraph((g) => ({
-      ...g,
-      devices: g.devices.map((d) => (d.id === sel.id ? { ...d, ...patch } : d)),
-    }));
-  };
+    // default ports per some common types
+    const defaults: Record<string, { in?: number; out?: number; portType?: string }> = {
+      camera: { out: 2, portType: "SDI" },
+      router: { in: 16, out: 16, portType: "SDI" },
+      "vision mixer": { in: 8, out: 4, portType: "SDI" },
+      server: { out: 2, in: 2, portType: "IP" },
+      "camera control unit": { in: 1, out: 2, portType: "SDI" },
+      embeder: { in: 2, out: 2, portType: "AUDIO" },
+      encoder: { in: 2, out: 1, portType: "IP" },
+      "replay system": { in: 6, out: 2, portType: "SDI" },
+      monitors: { in: 2, out: 0, portType: "HDMI" },
+    };
+    const def = defaults[type] || { out: 1, in: 0, portType: "SDI" };
 
-  const addPort = (direction: "IN" | "OUT", type = "SDI") => {
-    if (!sel) return;
-    const existing = sel.ports ?? [];
-    const idx = existing.filter((p) => p.direction === direction).length + 1;
-    const name = `${type.toUpperCase()}_${direction}_${idx}`;
-    const nextPorts = [...existing, { name, type: type.toUpperCase(), direction }];
-    updateSelectedDevice({ ports: nextPorts as any });
-  };
-  const deletePort = (portName: string) => {
-    if (!sel) return;
-    const nextPorts = (sel.ports ?? []).filter((p) => p.name !== portName);
-    updateSelectedDevice({ ports: nextPorts as any });
-  };
-  const updatePort = (portName: string, patch: Partial<{ name: string; type: string; direction: "IN" | "OUT" }>) => {
-    if (!sel) return;
-    const nextPorts = (sel.ports ?? []).map((p) =>
-      p.name === portName ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p
+    const mkPorts = (kind: "IN" | "OUT", n = 0, typ = "SDI") =>
+      Array.from({ length: n }).map((_, i) => ({
+        name: `${typ.toUpperCase()}_${kind}_${i + 1}`,
+        type: typ.toUpperCase(),
+        direction: kind,
+      }));
+
+    const defaultPorts = [
+      ...mkPorts("IN", def.in || 0, def.portType),
+      ...mkPorts("OUT", def.out || 0, def.portType),
+    ];
+
+    updateGraph(
+      addDevice(graph, {
+        type,
+        count: qty,
+        defaultPorts,
+      })
     );
-    updateSelectedDevice({ ports: nextPorts as any });
+
+    setAiPrompt("");
+  };
+
+  // ---------- toolbar actions ----------
+  const handleCopy = () =>
+    setClipboard(copySelectedDevices(graph, selectedIds));
+  const handlePaste = () =>
+    clipboard.length && updateGraph(pasteDevices(graph, clipboard));
+  const handleDelete = () => {
+    if (!selectedIds.size) return;
+    updateGraph(deleteSelectedDevices(graph, selectedIds));
+    setSelectedIds(new Set());
   };
 
   return (
     <div
-      className="min-h-screen text-white"
+      className="min-h-screen flex flex-col text-white"
       style={{ background: "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)" }}
     >
       {/* Top bar */}
-      <header className="h-14 border-b border-slate-700/60 px-4 flex items-center justify-between backdrop-blur">
+      <header className="h-14 shrink-0 border-b border-slate-700/60 px-4 flex items-center justify-between backdrop-blur">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 grid place-items-center font-bold">L</div>
           <div className="font-semibold tracking-wide">Leonardo</div>
           <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">Broadcast Schematic Editor</div>
         </div>
-        <div className="text-xs text-slate-300">v0.4</div>
+        <div className="text-xs text-slate-300">v0.5</div>
       </header>
 
-      {/* Body */}
-      <div className="h:[calc(100vh-56px)] grid grid-cols-[20rem,1fr,22rem]">
+      {/* Main content */}
+      <div className="flex-1 min-h-0 grid grid-cols-[18rem,1fr,22rem] gap-0">
         {/* Left tools */}
         <aside className="border-r border-slate-700/60 p-4 overflow-y-auto">
+          <h3 className="text-sm font-semibold text-slate-200 mb-3">Tools</h3>
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <button
+              className={`px-3 py-2 rounded-lg text-sm ${mode === "select" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"}`}
+              onClick={() => setMode("select")}
+              title="Mouse (Select/Move)"
+            >
+              Mouse
+            </button>
+            <button
+              className={`px-3 py-2 rounded-lg text-sm ${mode === "pan" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"}`}
+              onClick={() => setMode("pan")}
+              title="Pan View"
+            >
+              Pan
+            </button>
+            <button
+              className={`px-3 py-2 rounded-lg text-sm ${mode === "connect" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"}`}
+              onClick={() => setMode("connect")}
+              title="Connect Ports"
+            >
+              Connect
+            </button>
+          </div>
+
           <h3 className="text-sm font-semibold text-slate-200 mb-3">Equipment</h3>
           <button
             className="w-full mb-3 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium transition-colors"
@@ -220,9 +331,9 @@ export default function App() {
           </button>
 
           <div className="grid grid-cols-3 gap-2">
-            <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handleCopy} disabled={!selectedId}>Copy</button>
+            <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handleCopy} disabled={!selectedIds.size}>Copy</button>
             <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handlePaste} disabled={!clipboard.length}>Paste</button>
-            <button className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm" onClick={handleDelete} disabled={!selectedId}>Delete</button>
+            <button className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm" onClick={handleDelete} disabled={!selectedIds.size}>Delete</button>
           </div>
 
           <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">Project</h3>
@@ -242,40 +353,35 @@ export default function App() {
               <div className="text-center text-xs text-slate-300 grid place-items-center">{Math.round(zoom * 100)}%</div>
               <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={() => setZoom((z) => clampZoom(z * 1.1))}>+ Zoom</button>
             </div>
-            <button className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handleResetView}>Reset View</button>
+            <button className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={resetView}>Reset View</button>
           </div>
 
           <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">Device Catalog</h3>
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
             <DeviceCatalog />
           </div>
-
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">Chat</h3>
-          <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
-            <Chat />
-          </div>
         </aside>
 
         {/* Center canvas */}
-        <main className="relative">
-          <div className="absolute inset-0">
-            <Canvas
-              graph={graph}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              onChange={handleGraphChange}
-              showGrid={showGrid}
-              zoom={zoom}
-              pan={pan}
-              onViewChange={(v) => {
-                if (v.zoom !== undefined) setZoom(v.zoom);
-                if (v.pan !== undefined) setPan(v.pan);
-              }}
-            />
-          </div>
+        <main className="p-4 overflow-hidden flex flex-col">
+          <Canvas
+            graph={graph}
+            selectedIds={selectedIds}
+            mode={mode}
+            onToggleSelect={toggleSelect}
+            onClearSelection={clearSelection}
+            onChange={onCanvasChange}
+            showGrid={showGrid}
+            zoom={zoom}
+            pan={pan}
+            onViewChange={(v) => {
+              if (v.zoom !== undefined) setZoom(v.zoom);
+              if (v.pan !== undefined) setPan(v.pan);
+            }}
+          />
         </main>
 
-        {/* Right properties (collapsible) */}
+        {/* Right properties */}
         <aside className="border-l border-slate-700/60 p-4 overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-slate-200">Properties</h3>
@@ -286,92 +392,106 @@ export default function App() {
 
           {showRightPanel && (
             <div className="space-y-3">
-              {!sel ? (
+              {selectedIds.size === 0 ? (
                 <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 text-slate-400 text-sm">
-                  Nothing selected. Click a device.
+                  Nothing selected. Ctrl/Cmd-click to multi-select. Use the Connect tool to link ports.
                 </div>
               ) : (
-                <>
-                  <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
-                    <div className="text-slate-300 text-sm mb-1">Device</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="text-xs text-slate-400 col-span-2">ID</label>
-                      <div className="col-span-2 text-slate-200 text-sm">{sel.id}</div>
+                Array.from(selectedIds).map((id) => {
+                  const d = graph.devices.find((x) => x.id === id)!;
+                  const update = (patch: Partial<Device>) =>
+                    setGraph((g) => ({
+                      ...g,
+                      devices: g.devices.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+                    }));
 
-                      <div>
-                        <label className="text-xs text-slate-400">Type</label>
-                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
-                          value={sel.type ?? ""} onChange={(e) => updateSelectedDevice({ type: e.target.value })} />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400">Manufacturer</label>
-                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
-                          value={(sel as any).manufacturer ?? ""} onChange={(e) => updateSelectedDevice({ manufacturer: e.target.value } as any)} />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400">Model</label>
-                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
-                          value={(sel as any).model ?? ""} onChange={(e) => updateSelectedDevice({ model: e.target.value } as any)} />
-                      </div>
+                  const addPort = (direction: "IN" | "OUT", type = "SDI") => {
+                    const existing = d.ports ?? [];
+                    const idx = existing.filter((p) => p.direction === direction).length + 1;
+                    const name = `${type.toUpperCase()}_${direction}_${idx}`;
+                    update({ ports: [...existing, { name, type: type.toUpperCase(), direction }] as any });
+                  };
+                  const delPort = (portName: string) =>
+                    update({ ports: (d.ports ?? []).filter((p) => p.name !== portName) as any });
+                  const updPort = (portName: string, patch: any) =>
+                    update({
+                      ports: (d.ports ?? []).map((p) =>
+                        p.name === portName ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p
+                      ) as any,
+                    });
 
-                      <div>
-                        <label className="text-xs text-slate-400">Width</label>
-                        <input type="number" min={80}
-                          className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
-                          value={sel.w ?? 160}
-                          onChange={(e) => updateSelectedDevice({ w: parseInt(e.target.value || "160", 10) as any })} />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400">Height</label>
-                        <input type="number" min={60}
-                          className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
-                          value={sel.h ?? 80}
-                          onChange={(e) => updateSelectedDevice({ h: parseInt(e.target.value || "80", 10) as any })} />
-                      </div>
-                    </div>
-                  </div>
+                  return (
+                    <div key={id} className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                      <div className="text-slate-300 text-sm mb-1">{d.id}</div>
 
-                  <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-slate-300 text-sm">Ports</div>
-                      <div className="flex gap-2">
-                        <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
-                          onClick={() => addPort("IN")}>+ IN</button>
-                        <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
-                          onClick={() => addPort("OUT")}>+ OUT</button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      {(sel.ports ?? []).map((p) => (
-                        <div key={p.name} className="grid grid-cols-12 gap-2 items-center">
-                          <div className="col-span-4">
-                            <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
-                              value={p.name}
-                              onChange={(e) => updatePort(p.name, { name: e.target.value })} />
-                          </div>
-                          <div className="col-span-3">
-                            <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
-                              value={p.type}
-                              onChange={(e) => updatePort(p.name, { type: e.target.value })} />
-                          </div>
-                          <div className="col-span-3">
-                            <select className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
-                              value={p.direction}
-                              onChange={(e) => updatePort(p.name, { direction: e.target.value as any })}>
-                              <option value="IN">IN (left)</option>
-                              <option value="OUT">OUT (right)</option>
-                            </select>
-                          </div>
-                          <div className="col-span-2 text-right">
-                            <button className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1 rounded"
-                              onClick={() => deletePort(p.name)}>Delete</button>
-                          </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-slate-400">Type</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                            value={d.type ?? ""} onChange={(e) => update({ type: e.target.value })} />
                         </div>
-                      ))}
+                        <div>
+                          <label className="text-xs text-slate-400">Manufacturer</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                            value={(d as any).manufacturer ?? ""} onChange={(e) => update({ manufacturer: e.target.value } as any)} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Model</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                            value={(d as any).model ?? ""} onChange={(e) => update({ model: e.target.value } as any)} />
+                        </div>
+
+                        <div>
+                          <label className="text-xs text-slate-400">Width</label>
+                          <input type="number" min={80}
+                            className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                            value={d.w ?? 160}
+                            onChange={(e) => update({ w: parseInt(e.target.value || "160", 10) as any })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Height</label>
+                          <input type="number" min={60}
+                            className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                            value={d.h ?? 80}
+                            onChange={(e) => update({ h: parseInt(e.target.value || "80", 10) as any })} />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between mt-2">
+                        <div className="text-slate-300 text-sm">Ports</div>
+                        <div className="flex gap-2">
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort("IN")}>+ IN</button>
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort("OUT")}>+ OUT</button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {(d.ports ?? []).map((p) => (
+                          <div key={p.name} className="grid grid-cols-12 gap-2 items-center">
+                            <div className="col-span-4">
+                              <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.name} onChange={(e) => updPort(p.name, { name: e.target.value })} />
+                            </div>
+                            <div className="col-span-3">
+                              <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.type} onChange={(e) => updPort(p.name, { type: e.target.value })} />
+                            </div>
+                            <div className="col-span-3">
+                              <select className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.direction} onChange={(e) => updPort(p.name, { direction: e.target.value as any })}>
+                                <option value="IN">IN (left)</option>
+                                <option value="OUT">OUT (right)</option>
+                              </select>
+                            </div>
+                            <div className="col-span-2 text-right">
+                              <button className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1 rounded" onClick={() => delPort(p.name)}>Delete</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </>
+                  );
+                })
               )}
             </div>
           )}
@@ -379,25 +499,21 @@ export default function App() {
       </div>
 
       {/* Bottom AI command bar */}
-      <div className="ai-command-bar fixed bottom-0 left-0 right-0 bg-black/40 border-t border-slate-700/60 px-4 py-3">
+      <div className="ai-command-bar sticky bottom-0 left-0 right-0 bg-black/40 border-t border-slate-700/60 px-4 py-3">
         <div className="max-w-6xl mx-auto flex items-center gap-2">
           <input
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleRunAi()}
-            placeholder='Type a command, e.g. "add 5 cameras"'
+            onKeyDown={(e) => e.key === "Enter" && runAi()}
+            placeholder='Try: "create 5 cameras", "router", "vision mixer 2"'
             className="flex-1 bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 outline-none"
           />
-          <button onClick={handleRunAi} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">Run</button>
+          <button onClick={runAi} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">Run</button>
         </div>
       </div>
 
       {/* Add Equipment modal */}
-      <AddEquipmentModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onSubmit={handleAddSubmit}
-      />
+      <AddEquipmentModal open={addOpen} onClose={() => setAddOpen(false)} onSubmit={handleAddSubmit} />
     </div>
   );
 }
