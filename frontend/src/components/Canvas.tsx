@@ -4,15 +4,19 @@ import { clampZoom, nextConnectionIdFor } from "../lib/editor";
 
 type Device = GraphState["devices"][number];
 
+type Mode = "select" | "pan" | "connect";
+
 type Props = {
   graph?: GraphState | null;
-  selectedId?: string | null;
-  onSelect?: (id: string | null) => void;
+  selectedIds?: Set<string>;
+  mode?: Mode;
+  onToggleSelect?: (id: string, additive: boolean) => void;
+  onClearSelection?: () => void;
   onChange?: (next: GraphState) => void;
-  showGrid?: boolean;
 
-  zoom?: number; // default 1
-  pan?: { x: number; y: number }; // default {0,0}
+  showGrid?: boolean;
+  zoom?: number;
+  pan?: { x: number; y: number };
   onViewChange?: (v: { zoom?: number; pan?: { x: number; y: number } }) => void;
 };
 
@@ -24,8 +28,10 @@ const COLS = 4;
 
 export function Canvas({
   graph,
-  selectedId,
-  onSelect,
+  selectedIds,
+  mode = "select",
+  onToggleSelect,
+  onClearSelection,
   onChange,
   showGrid = true,
   zoom = 1,
@@ -38,8 +44,10 @@ export function Canvas({
     [devices]
   );
 
-  // compute positions (auto if no x/y)
-  const { positioned, width, height } = useMemo(() => {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // compute positions (auto if missing) + massive world size so grid is always visible
+  const { positioned, worldW, worldH } = useMemo(() => {
     const out = devices.map((d, i) => {
       if (typeof d.x === "number" && typeof d.y === "number")
         return { ...d, w: d.w ?? BOX_W, h: d.h ?? BOX_H };
@@ -50,33 +58,25 @@ export function Canvas({
       return { ...d, x, y, w: d.w ?? BOX_W, h: d.h ?? BOX_H };
     });
 
-    // large world so grid looks infinite
-    const minW = 3000;
-    const minH = 2000;
-    const contentW =
-      (Math.min(out.length - 1, COLS - 1) + 1) * (BOX_W + GAP_X) + 80 || 800;
-    const rows = Math.ceil(out.length / COLS);
-    const contentH = rows * (BOX_H + GAP_Y) + 120 || 600;
-
+    // “infinite” world
     return {
       positioned: out,
-      width: Math.max(contentW, minW),
-      height: Math.max(contentH, minH),
+      worldW: 100000,
+      worldH: 100000,
     };
   }, [devices]);
 
-  function centerOf(d: Device) {
-    return { cx: (d.x ?? 0) + (d.w ?? BOX_W) / 2, cy: (d.y ?? 0) + (d.h ?? BOX_H) / 2 };
-  }
+  const centerOf = (d: Device) => ({
+    cx: (d.x ?? 0) + (d.w ?? BOX_W) / 2,
+    cy: (d.y ?? 0) + (d.h ?? BOX_H) / 2,
+  });
 
-  // ---- dragging device state ----
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  // ---- drag device(s) ----
   const [drag, setDrag] = useState<{
-    id: string;
+    ids: string[];
     startX: number;
     startY: number;
-    origX: number;
-    origY: number;
+    orig: { [id: string]: { x: number; y: number } };
   } | null>(null);
 
   useEffect(() => {
@@ -86,8 +86,8 @@ export function Canvas({
       const dy = (e.clientY - drag.startY) / zoom;
 
       const nextDevices = graph.devices.map((d) =>
-        d.id === drag.id
-          ? { ...d, x: Math.max(0, drag.origX + dx), y: Math.max(0, drag.origY + dy) }
+        drag.ids.includes(d.id)
+          ? { ...d, x: Math.max(0, drag.orig[d.id].x + dx), y: Math.max(0, drag.orig[d.id].y + dy) }
           : d
       );
       onChange({ ...graph, devices: nextDevices });
@@ -105,7 +105,7 @@ export function Canvas({
     };
   }, [drag, graph, onChange, zoom]);
 
-  // ---- pan/zoom handlers ----
+  // ---- pan/zoom ----
   const [panning, setPanning] = useState<{ sx: number; sy: number; px: number; py: number } | null>(null);
 
   const onWheel: React.WheelEventHandler = (e) => {
@@ -116,8 +116,7 @@ export function Canvas({
   };
 
   const onMouseDownWorld: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    // Right button drag to pan
-    if (e.button === 2) {
+    if (mode === "pan" || e.button === 2) {
       e.preventDefault();
       setPanning({ sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y });
     }
@@ -145,48 +144,32 @@ export function Canvas({
 
   const onContextMenu: React.MouseEventHandler = (e) => e.preventDefault();
 
-  // click background to clear selection
-  const onBackgroundClick = (e: React.MouseEvent) => {
-    if (e.target === wrapRef.current) onSelect?.(null);
-  };
+  // ---- selection helpers ----
+  const onBackgroundClick = () => onClearSelection?.();
 
-  // --- helpers to render port pins on left/right ---
-  const getPortsBySide = (d: Device) => {
-    const ports = d.ports ?? [];
-    const left = ports.filter((p: any) => p.direction === "IN");
-    const right = ports.filter((p: any) => p.direction === "OUT");
-    return { left, right };
-  };
-
-  // ---- link (connection) interaction ----
-  type PortRef = { deviceId: string; portName: string; direction: "IN" | "OUT"; x: number; y: number };
+  // ---- linking ----
+  type PortRef = { deviceId: string; portName: string; dir: "IN" | "OUT"; x: number; y: number };
   const [linkFrom, setLinkFrom] = useState<PortRef | null>(null);
   const [mouse, setMouse] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // convert screen coords to world coords (inverse of pan/zoom)
-  const screenToWorld = (clientX: number, clientY: number) => {
+  const toWorld = (clientX: number, clientY: number) => {
     const rect = (wrapRef.current as HTMLDivElement).getBoundingClientRect();
     const sx = clientX - rect.left - pan.x;
     const sy = clientY - rect.top - pan.y;
     return { x: sx / zoom, y: sy / zoom };
   };
 
-  const startLink = (ref: PortRef) => setLinkFrom(ref);
-
-  const finishLinkIfValid = (to: PortRef) => {
+  const tryFinishLink = (to: PortRef) => {
     if (!graph || !onChange || !linkFrom) return;
-    // enforce OUT -> IN (either direction start)
-    const a = linkFrom.direction;
-    const b = to.direction;
+    const a = linkFrom.dir;
+    const b = to.dir;
     const from = a === "OUT" ? linkFrom : to;
     const dest = a === "OUT" ? to : linkFrom;
-    if (from.direction !== "OUT" || dest.direction !== "IN") return; // invalid
-
-    // prevent self-connection same port
+    if (from.dir !== "OUT" || dest.dir !== "IN") return;
     if (from.deviceId === dest.deviceId && from.portName === dest.portName) return;
 
     const id = nextConnectionIdFor(graph);
-    const next = {
+    onChange({
       ...graph,
       connections: [
         ...graph.connections,
@@ -196,28 +179,25 @@ export function Canvas({
           to: { deviceId: dest.deviceId, portName: dest.portName },
         },
       ],
-    };
-    onChange(next);
+    });
   };
 
-  // track mouse for temp link
   const onMouseMoveWorld: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    if (!wrapRef.current) return;
-    const w = screenToWorld(e.clientX, e.clientY);
+    const w = toWorld(e.clientX, e.clientY);
     setMouse(w);
   };
 
   return (
     <div
       ref={wrapRef}
-      onClick={onBackgroundClick}
       onWheel={onWheel}
       onContextMenu={onContextMenu}
-      className="m-4 h-[calc(100%-2rem)] rounded-2xl border border-slate-700 bg-slate-900/40 relative overflow-hidden"
+      onClick={(e) => e.target === wrapRef.current && onBackgroundClick()}
+      className="flex-1 min-h-0 rounded-2xl border border-slate-700 bg-slate-900/40 relative overflow-hidden"
     >
-      {/* world space (panned & zoomed) */}
+      {/* world */}
       <div
-        className="w-full h-full relative"
+        className="absolute inset-0"
         onMouseDown={onMouseDownWorld}
         onMouseMove={onMouseMoveWorld}
         style={{
@@ -230,12 +210,11 @@ export function Canvas({
               `
             : "none",
           backgroundSize: showGrid ? "24px 24px, 24px 24px" : undefined,
-          backgroundPosition: "0 0, 0 0",
         }}
       >
-        <div style={{ width, height, position: "relative" }}>
+        <div style={{ width: worldW, height: worldH, position: "relative" }}>
           {/* connections */}
-          <svg width={width} height={height} className="absolute inset-0 pointer-events-none">
+          <svg width={worldW} height={worldH} className="absolute inset-0 pointer-events-none">
             {(graph?.connections ?? []).map((c) => {
               const a = deviceMap.get(c.from.deviceId);
               const b = deviceMap.get(c.to.deviceId);
@@ -249,12 +228,11 @@ export function Canvas({
                   y1={A.cy}
                   x2={B.cx}
                   y2={B.cy}
-                  stroke="rgba(96,165,250,0.7)"
+                  stroke="rgba(96,165,250,0.75)"
                   strokeWidth={2}
                 />
               );
             })}
-            {/* temp link while dragging */}
             {linkFrom && (
               <line
                 x1={linkFrom.x}
@@ -270,112 +248,105 @@ export function Canvas({
 
           {/* devices */}
           {positioned.map((d) => {
-            const isSel = d.id === selectedId;
+            const isSel = !!selectedIds?.has(d.id);
             const w = d.w ?? BOX_W;
             const h = d.h ?? BOX_H;
-            const ports = d.ports ?? [];
-            const left = ports.filter((p: any) => p.direction === "IN");
-            const right = ports.filter((p: any) => p.direction === "OUT");
+            const left = (d.ports ?? []).filter((p) => p.direction === "IN");
+            const right = (d.ports ?? []).filter((p) => p.direction === "OUT");
 
             return (
               <div
                 key={d.id}
-                style={{ left: d.x, top: d.y, width: w, height: h, cursor: "grab" }}
+                style={{ left: d.x, top: d.y, width: w, height: h, cursor: mode === "pan" ? "grab" : "default" }}
                 className={`absolute rounded-xl border shadow-sm transition-all
                   ${isSel ? "border-blue-400 ring-2 ring-blue-400/40" : "border-slate-600"}
                   bg-slate-800/80 hover:shadow-md select-none`}
                 onMouseDown={(e) => {
+                  if (mode !== "select") return;
                   if (e.button !== 0) return;
                   e.stopPropagation();
-                  onSelect?.(d.id);
-                  setDrag({ id: d.id, startX: e.clientX, startY: e.clientY, origX: d.x ?? 0, origY: d.y ?? 0 });
+                  const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+                  onToggleSelect?.(d.id, additive);
+                  // start drag for all selected
+                  const ids = Array.from(new Set([d.id, ...(selectedIds ? Array.from(selectedIds) : [])]));
+                  const orig: any = {};
+                  ids.forEach((id) => {
+                    const dev = deviceMap.get(id)!;
+                    orig[id] = { x: dev.x, y: dev.y };
+                  });
+                  setDrag({ ids, startX: e.clientX, startY: e.clientY, orig });
                 }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
-                  onSelect?.(d.id);
+                  onToggleSelect?.(d.id, false);
                 }}
-                onMouseUp={() => {
-                  // stop linking if mouse up on body (cancel)
-                  setLinkFrom(null);
-                }}
+                onMouseUp={() => setLinkFrom(null)}
               >
-                {/* Header shows **Device ID** */}
-                <div className="px-3 pt-2 text-sm font-semibold text-slate-100 truncate">
-                  {d.id}
-                </div>
+                {/* Header with ID */}
+                <div className="px-3 pt-2 text-sm font-semibold text-slate-100 truncate">{d.id}</div>
                 <div className="px-3 text-[11px] text-slate-400 flex gap-2">
                   <span>{d.type ?? "device"}</span>
-                  {((d as any).manufacturer || (d as any).model) && (
-                    <span className="text-slate-500">
-                      • {(d as any).manufacturer ?? ""} {(d as any).model ?? ""}
-                    </span>
-                  )}
+                  {(d as any).manufacturer || (d as any).model ? (
+                    <span className="text-slate-500">• {(d as any).manufacturer ?? ""} {(d as any).model ?? ""}</span>
+                  ) : null}
                 </div>
 
-                {/* Port rails */}
+                {/* Ports */}
                 {/* Left (IN) */}
                 <div className="absolute left-0 top-0 bottom-0 w-3">
-                  {left.map((p: any, idx: number) => {
+                  {left.map((p, idx) => {
                     const y = ((idx + 1) * h) / (left.length + 1);
-                    const pr: any = {
-                      deviceId: d.id,
-                      portName: p.name,
-                      direction: "IN" as const,
-                      x: (d.x ?? 0), // approximate pin center
-                      y: (d.y ?? 0) + y,
-                    };
+                    const pr = { deviceId: d.id, portName: p.name, dir: "IN" as const, x: (d.x ?? 0), y: (d.y ?? 0) + y };
                     return (
                       <div
                         key={p.name}
                         className="absolute -left-[6px]"
                         style={{ top: y - 4 }}
+                        title={`${p.name} (${p.type})`}
                         onMouseDown={(e) => {
+                          if (mode !== "connect") return;
                           e.stopPropagation();
-                          // Allow starting from IN too; direction check done at finish
                           setLinkFrom(pr);
                         }}
                         onMouseUp={(e) => {
+                          if (mode !== "connect") return;
                           e.stopPropagation();
                           if (linkFrom) {
-                            finishLinkIfValid(pr);
+                            tryFinishLink(pr);
                             setLinkFrom(null);
                           }
                         }}
-                        title={`${p.name} (${p.type})`}
                       >
                         <div className="w-2 h-2 rounded-full bg-emerald-400 border border-emerald-300" />
                       </div>
                     );
                   })}
                 </div>
+
                 {/* Right (OUT) */}
                 <div className="absolute right-0 top-0 bottom-0 w-3">
-                  {right.map((p: any, idx: number) => {
+                  {right.map((p, idx) => {
                     const y = ((idx + 1) * h) / (right.length + 1);
-                    const pr: any = {
-                      deviceId: d.id,
-                      portName: p.name,
-                      direction: "OUT" as const,
-                      x: (d.x ?? 0) + w,
-                      y: (d.y ?? 0) + y,
-                    };
+                    const pr = { deviceId: d.id, portName: p.name, dir: "OUT" as const, x: (d.x ?? 0) + w, y: (d.y ?? 0) + y };
                     return (
                       <div
                         key={p.name}
                         className="absolute -right-[6px]"
                         style={{ top: y - 4 }}
+                        title={`${p.name} (${p.type})`}
                         onMouseDown={(e) => {
+                          if (mode !== "connect") return;
                           e.stopPropagation();
-                          setLinkFrom(pr); // start link from OUT
+                          setLinkFrom(pr);
                         }}
                         onMouseUp={(e) => {
+                          if (mode !== "connect") return;
                           e.stopPropagation();
                           if (linkFrom) {
-                            finishLinkIfValid(pr);
+                            tryFinishLink(pr);
                             setLinkFrom(null);
                           }
                         }}
-                        title={`${p.name} (${p.type})`}
                       >
                         <div className="w-2 h-2 rounded-full bg-sky-400 border border-sky-300" />
                       </div>
@@ -388,9 +359,9 @@ export function Canvas({
         </div>
       </div>
 
-      {/* small hint overlay */}
+      {/* hint */}
       <div className="absolute bottom-2 left-3 text-[11px] text-slate-400 bg-black/30 px-2 py-1 rounded">
-        Wheel = Zoom • Right-drag = Pan • Click = Select • Drag = Move • Drag OUT → IN to connect
+        Mouse: Select / Drag • Right-drag or Pan tool: Pan • Wheel: Zoom • Connect tool: drag OUT→IN
       </div>
     </div>
   );
