@@ -1,11 +1,14 @@
 services:
   backend:
     image: ghcr.io/kikulik/leonardo-backend:${BACKEND_TAG}
-    ports: ["${BACKEND_PORT}:10001"]
+    ports:
+      - "${BACKEND_PORT}:10001"
     restart: unless-stopped
 
   frontend:
     image: ghcr.io/kikulik/leonardo-frontend:${FRONTEND_TAG}
-    depends_on: [backend]
-    ports: ["${FRONTEND_PORT}:10201"]
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT}:10201"
     restart: unless-stopped
