@@ -174,7 +174,7 @@ export function addDevice(
   const PIN_AND_TEXT = 2 * (7 + 9);   // PIN_INSET + text offset on both sides
   const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
 
-  let draft = { ...state };
+  let draft = { state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
     draft = {
