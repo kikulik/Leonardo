@@ -1,3 +1,4 @@
+// frontend/src/lib/editor.ts
 // ---------- Types ----------
 export type PortDirection = "IN" | "OUT";
 export type PortType = "SDI" | "IP" | "HDMI" | "AUDIO" | string;
@@ -15,7 +16,7 @@ export interface Device {
   y: number;
   w: number;
   h: number;
-  color?: string;
+  color?: string;        // UI color
   customName?: string;
   manufacturer?: string;
   model?: string;
@@ -29,8 +30,8 @@ export interface ConnectionEnd {
 
 export interface Connection {
   id: string; // CONN-0001
-  from: ConnectionEnd; // must be OUT
-  to: ConnectionEnd;   // must be IN
+  from: ConnectionEnd;
+  to: ConnectionEnd;
 }
 
 export interface GraphState {
@@ -43,7 +44,7 @@ export function clampZoom(z: number, min = 0.25, max = 2.5) {
   return Math.min(max, Math.max(min, z));
 }
 
-// ---------- Type → Prefix map (expanded) ----------
+// ---------- Type → Prefix map ----------
 export const TYPE_PREFIX: Record<string, string> = {
   camera: "CAM",
   router: "RTR",
@@ -106,20 +107,32 @@ export function findDeviceByIdOrName(devices: Device[], name: string) {
   );
 }
 
-export function getAvailablePort(
-  device: Device,
-  direction: PortDirection,
-  preferType?: PortType
-) {
-  const ports = (device.ports ?? []).filter((p) => p.direction === direction);
-  if (!ports.length) return undefined;
-  if (preferType) {
-    const typed = ports.find(
-      (p) => p.type.toUpperCase() === preferType.toUpperCase()
-    );
-    if (typed) return typed;
+export function getPorts(device: Device, dir: PortDirection) {
+  return (device.ports ?? []).filter((p) => p.direction === dir);
+}
+
+export function getPort(device: Device, name: string) {
+  return (device.ports ?? []).find((p) => p.name === name);
+}
+
+// ---------- Snap / movement ----------
+export function snap(value: number, cell = 16) {
+  return Math.round(value / cell) * cell;
+}
+
+export function moveDevice(
+  d: Device,
+  dx: number,
+  dy: number,
+  opts?: { snapToGrid?: boolean; gridSize?: number }
+): Device {
+  const nx = (d.x ?? 0) + dx;
+  const ny = (d.y ?? 0) + dy;
+  if (opts?.snapToGrid) {
+    const gs = opts.gridSize ?? 16;
+    return { ...d, x: snap(nx, gs), y: snap(ny, gs) };
   }
-  return ports[0];
+  return { ...d, x: nx, y: ny };
 }
 
 // ---------- Mutators ----------
@@ -142,35 +155,39 @@ export function addDevice(
   const {
     type,
     count = 1,
-    x = 100,
-    y = 100,
+    x = 80,
+    y = 80,
     w = 160,
     h = 80,
-    color = "#1f2937", // slate-800-ish default
+    color = "#334155",
     customNameBase,
     defaultPorts = [],
     manufacturer,
     model,
   } = payload;
 
-  let draft = { ...state, devices: [...state.devices], connections: [...state.connections] };
-
+  let draft = { ...state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
-    const device: Device = {
-      id,
-      type,
-      x: x + i * 40,
-      y: y + i * 40,
-      w,
-      h,
-      color,
-      customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
-      manufacturer,
-      model,
-      ports: [...defaultPorts],
+    draft = {
+      ...draft,
+      devices: [
+        ...draft.devices,
+        {
+          id,
+          type,
+          x: x + i * 40,
+          y: y + i * 40,
+          w,
+          h,
+          color,
+          customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
+          manufacturer,
+          model,
+          ports: [...defaultPorts],
+        },
+      ],
     };
-    draft.devices.push(device);
   }
   return draft;
 }
@@ -180,16 +197,17 @@ export function deleteSelectedDevices(
   selectedIds: Set<string>
 ): GraphState {
   const devices = state.devices.filter((d) => !selectedIds.has(d.id));
-  const removed = new Set(
-    state.devices.filter((d) => selectedIds.has(d.id)).map((d) => d.id)
-  );
+  const removed = new Set(state.devices.filter((d) => selectedIds.has(d.id)).map((d) => d.id));
   const connections = state.connections.filter(
     (c) => !removed.has(c.from.deviceId) && !removed.has(c.to.deviceId)
   );
   return { devices, connections };
 }
 
-export function copySelectedDevices(state: GraphState, selectedIds: Set<string>) {
+export function copySelectedDevices(
+  state: GraphState,
+  selectedIds: Set<string>
+) {
   return state.devices
     .filter((d) => selectedIds.has(d.id))
     .map((d) => ({ ...d, ports: [...(d.ports ?? [])] }));
@@ -200,18 +218,57 @@ export function pasteDevices(
   clipboard: Device[],
   offset = { x: 40, y: 40 }
 ): GraphState {
-  let draft = { ...state, devices: [...state.devices], connections: [...state.connections] };
+  let draft = { ...state };
   clipboard.forEach((d, i) => {
     const newId = nextDeviceIdForType(draft, d.type);
-    draft.devices.push({
-      ...d,
-      id: newId,
-      x: d.x + offset.x * (i + 1),
-      y: d.y + offset.y * (i + 1),
-      ports: [...(d.ports ?? [])],
-    });
+    draft = {
+      ...draft,
+      devices: [
+        ...draft.devices,
+        {
+          ...d,
+          id: newId,
+          x: (d.x ?? 0) + offset.x * (i + 1),
+          y: (d.y ?? 0) + offset.y * (i + 1),
+          ports: [...(d.ports ?? [])],
+        },
+      ],
+    };
   });
   return draft;
+}
+
+export function addConnection(
+  state: GraphState,
+  from: ConnectionEnd,
+  to: ConnectionEnd
+): GraphState {
+  // disallow device-to-device: enforce port presence and directions
+  const fromDev = state.devices.find((d) => d.id === from.deviceId);
+  const toDev = state.devices.find((d) => d.id === to.deviceId);
+  if (!fromDev || !toDev) return state;
+
+  const fromPort = getPort(fromDev, from.portName);
+  const toPort = getPort(toDev, to.portName);
+  if (!fromPort || !toPort) return state;
+
+  if (!(fromPort.direction === "OUT" && toPort.direction === "IN")) return state;
+
+  // prevent duplicates
+  const dupe = state.connections.some(
+    (c) =>
+      c.from.deviceId === from.deviceId &&
+      c.from.portName === from.portName &&
+      c.to.deviceId === to.deviceId &&
+      c.to.portName === to.portName
+  );
+  if (dupe) return state;
+
+  const id = nextConnectionIdFor(state);
+  return {
+    ...state,
+    connections: [...state.connections, { id, from, to }],
+  };
 }
 
 // ---------- Save / Load ----------
