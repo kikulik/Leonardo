@@ -4,6 +4,7 @@ export type PortDirection = "IN" | "OUT";
 export type PortType = "SDI" | "IP" | "HDMI" | "AUDIO" | string;
 
 export interface Port {
+  id: string;            // stable uid (doesn't change when name changes)
   name: string;
   type: PortType;
   direction: PortDirection;
@@ -11,12 +12,12 @@ export interface Port {
 
 export interface Device {
   id: string;            // e.g. CAM.01
-  type: string;          // logical category ("camera", "router", ...)
+  type: string;          // logical category
   x: number;
   y: number;
   w: number;
   h: number;
-  color?: string;        // UI color
+  color?: string;
   customName?: string;
   manufacturer?: string;
   model?: string;
@@ -25,13 +26,13 @@ export interface Device {
 
 export interface ConnectionEnd {
   deviceId: string;
-  portName: string;
+  portId: string;
 }
 
 export interface Connection {
   id: string; // CONN-0001
-  from: ConnectionEnd;
-  to: ConnectionEnd;
+  from: ConnectionEnd;   // must be OUT
+  to: ConnectionEnd;     // must be IN
 }
 
 export interface GraphState {
@@ -39,12 +40,18 @@ export interface GraphState {
   connections: Connection[];
 }
 
-// ---------- Visual helpers ----------
+// ---------- Utils ----------
+export function uid() {
+  // deterministic enough for UI
+  // @ts-ignore
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return "p_" + Math.random().toString(36).slice(2, 10);
+}
+
 export function clampZoom(z: number, min = 0.25, max = 2.5) {
   return Math.min(max, Math.max(min, z));
 }
 
-// ---------- Type → Prefix map ----------
 export const TYPE_PREFIX: Record<string, string> = {
   camera: "CAM",
   router: "RTR",
@@ -67,7 +74,6 @@ export const TYPE_PREFIX: Record<string, string> = {
   patch_panels: "PATCH",
 };
 
-// ---------- ID helpers (state-aware) ----------
 export function nextDeviceIdForType(state: GraphState, type: string) {
   const prefix = TYPE_PREFIX[type?.toLowerCase()] || "DEV";
   let maxNum = 0;
@@ -98,28 +104,20 @@ export function nextConnectionIdFor(state: GraphState) {
 }
 
 // ---------- Finders ----------
-export function findDeviceByIdOrName(devices: Device[], name: string) {
-  const n = (name || "").toLowerCase().trim();
-  return devices.find(
-    (d) =>
-      d.id.toLowerCase() === n ||
-      (d.customName && d.customName.toLowerCase() === n)
-  );
+export function findDevice(devs: Device[], id: string) {
+  return devs.find((d) => d.id === id);
 }
-
 export function getPorts(device: Device, dir: PortDirection) {
   return (device.ports ?? []).filter((p) => p.direction === dir);
 }
-
-export function getPort(device: Device, name: string) {
-  return (device.ports ?? []).find((p) => p.name === name);
+export function getPortById(device: Device, portId: string) {
+  return (device.ports ?? []).find((p) => p.id === portId);
 }
 
 // ---------- Snap / movement ----------
 export function snap(value: number, cell = 16) {
   return Math.round(value / cell) * cell;
 }
-
 export function moveDevice(
   d: Device,
   dx: number,
@@ -147,7 +145,7 @@ export function addDevice(
     h?: number;
     color?: string;
     customNameBase?: string;
-    defaultPorts?: Port[];
+    defaultPorts?: Omit<Port, "id">[] | Port[];
     manufacturer?: string;
     model?: string;
   }
@@ -165,6 +163,9 @@ export function addDevice(
     manufacturer,
     model,
   } = payload;
+
+  const normalizePorts = (arr: (Omit<Port, "id"> | Port)[]): Port[] =>
+    arr.map((p) => ({ id: (p as Port).id ?? uid(), name: p.name, type: p.type, direction: p.direction }));
 
   let draft = { ...state };
   for (let i = 0; i < count; i++) {
@@ -184,7 +185,7 @@ export function addDevice(
           customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
           manufacturer,
           model,
-          ports: [...defaultPorts],
+          ports: normalizePorts(defaultPorts),
         },
       ],
     };
@@ -210,7 +211,11 @@ export function copySelectedDevices(
 ) {
   return state.devices
     .filter((d) => selectedIds.has(d.id))
-    .map((d) => ({ ...d, ports: [...(d.ports ?? [])] }));
+    .map((d) => ({
+      ...d,
+      // duplicate ports with new ids so pasted devices don't alias connections
+      ports: (d.ports ?? []).map((p) => ({ ...p, id: uid() })),
+    }));
 }
 
 export function pasteDevices(
@@ -230,7 +235,7 @@ export function pasteDevices(
           id: newId,
           x: (d.x ?? 0) + offset.x * (i + 1),
           y: (d.y ?? 0) + offset.y * (i + 1),
-          ports: [...(d.ports ?? [])],
+          ports: (d.ports ?? []).map((p) => ({ ...p, id: uid() })),
         },
       ],
     };
@@ -243,32 +248,32 @@ export function addConnection(
   from: ConnectionEnd,
   to: ConnectionEnd
 ): GraphState {
-  // disallow device-to-device: enforce port presence and directions
-  const fromDev = state.devices.find((d) => d.id === from.deviceId);
-  const toDev = state.devices.find((d) => d.id === to.deviceId);
+  const fromDev = findDevice(state.devices, from.deviceId);
+  const toDev = findDevice(state.devices, to.deviceId);
   if (!fromDev || !toDev) return state;
 
-  const fromPort = getPort(fromDev, from.portName);
-  const toPort = getPort(toDev, to.portName);
+  const fromPort = getPortById(fromDev, from.portId);
+  const toPort = getPortById(toDev, to.portId);
   if (!fromPort || !toPort) return state;
 
+  // enforce OUT -> IN only
   if (!(fromPort.direction === "OUT" && toPort.direction === "IN")) return state;
 
   // prevent duplicates
   const dupe = state.connections.some(
-    (c) =>
-      c.from.deviceId === from.deviceId &&
-      c.from.portName === from.portName &&
-      c.to.deviceId === to.deviceId &&
-      c.to.portName === to.portName
+    (c) => c.from.deviceId === from.deviceId && c.from.portId === from.portId &&
+           c.to.deviceId === to.deviceId && c.to.portId === to.portId
   );
   if (dupe) return state;
 
+  // NEW: one OUT may have only one connection
+  const outUsed = state.connections.some(
+    (c) => c.from.deviceId === from.deviceId && c.from.portId === from.portId
+  );
+  if (outUsed) return state;
+
   const id = nextConnectionIdFor(state);
-  return {
-    ...state,
-    connections: [...state.connections, { id, from, to }],
-  };
+  return { ...state, connections: [...state.connections, { id, from, to }] };
 }
 
 // ---------- Save / Load ----------
