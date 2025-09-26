@@ -157,29 +157,17 @@ export function addDevice(
     manufacturer, model,
   } = payload;
 
+  // --- Updated sizing logic to match HTML implementation ---
   const normPorts = normalizePorts(defaultPorts);
-  const INs = normPorts.filter(p => p.direction === "IN");
-  const OUTs = normPorts.filter(p => p.direction === "OUT");
-  const maxPorts = Math.max(INs.length, OUTs.length);
+  const inputPorts = normPorts.filter(p => p.direction === "IN" || p.direction === "HYBRID");
+  const outputPorts = normPorts.filter(p => p.direction === "OUT" || p.direction === "HYBRID");
+  const maxPorts = Math.max(inputPorts.length, outputPorts.length);
 
-  // ---- auto sizing that matches Canvas logic (header excluded from pin math) ----
-  const HEADER_H = 36;
-  const BODY_PAD_TOP = 15;
-  const BODY_PAD_BOTTOM = 15;
-
-  const minPortSpacing = 24;
-  const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
-  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
-
-  const CHAR_W = Math.ceil(10 * 0.6); // PORT_FONT=10
-  const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
-  const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
-  const MIDDLE_GAP = 24;
-  const PIN_INSET = 7;
-  const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
-  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
-
-  let draft: GraphState = withPortIds({ ...state });
+  // Use HTML sizing approach: simple calculation based on port count
+  const autoH = Math.max(80, 60 + maxPorts * 20); // Base height + port spacing
+  const autoW = Math.max(160, 120); // Keep reasonable minimum width
+  
+  let draft = { ...state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
     draft = {
@@ -205,15 +193,25 @@ export function addDevice(
   return draft;
 }
 
-export function deleteSelectedDevices(state: GraphState, selectedIds: Set<string>): GraphState {
-  const keep = new Set(state.devices.filter((d) => !selectedIds.has(d.id)).map((d) => d.id));
+export function deleteSelectedDevices(
+  state: GraphState,
+  selectedIds: Set<string>
+): GraphState {
+  const keep = new Set(
+    state.devices.filter((d) => !selectedIds.has(d.id)).map((d) => d.id)
+  );
   return {
     devices: state.devices.filter((d) => keep.has(d.id)),
-    connections: state.connections.filter((c) => keep.has(c.from.deviceId) && keep.has(c.to.deviceId)),
+    connections: state.connections.filter(
+      (c) => keep.has(c.from.deviceId) && keep.has(c.to.deviceId)
+    ),
   };
 }
 
-export function copySelectedDevices(state: GraphState, selectedIds: Set<string>) {
+export function copySelectedDevices(
+  state: GraphState,
+  selectedIds: Set<string>
+) {
   return state.devices
     .filter((d) => selectedIds.has(d.id))
     .map((d) => ({ ...d, ports: d.ports.map((p) => ({ ...p })) }));
@@ -245,7 +243,12 @@ export function pasteDevices(
 }
 
 // OUT may connect to only one IN; each IN accepts only one.
-export function addConnection(state: GraphState, from: ConnectionEnd, to: ConnectionEnd): GraphState {
+// No device-to-device; it's strictly pin-to-pin.
+export function addConnection(
+  state: GraphState,
+  from: ConnectionEnd,
+  to: ConnectionEnd
+): GraphState {
   const fromDev = state.devices.find((d) => d.id === from.deviceId);
   const toDev = state.devices.find((d) => d.id === to.deviceId);
   if (!fromDev || !toDev) return state;
@@ -267,7 +270,8 @@ export function addConnection(state: GraphState, from: ConnectionEnd, to: Connec
 
   // forbid fan-out: OUT already used
   const outUsed = state.connections.some(
-    (c) => c.from.deviceId === from.deviceId && c.from.portName === from.portName
+    (c) =>
+      c.from.deviceId === from.deviceId && c.from.portName === from.portName
   );
   if (outUsed) return state;
 
