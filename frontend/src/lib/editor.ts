@@ -5,7 +5,7 @@ export type PortDirection = "IN" | "OUT";
 export type PortType = string;
 
 export interface Port {
-  id: string;                 // NEW: stable id so editing names won't drop focus
+  id: string;                 // stable id so editing names won't drop focus
   name: string;
   type: PortType;
   direction: PortDirection;
@@ -68,7 +68,9 @@ const TYPE_PREFIX: Record<string, string> = {
 };
 
 function uid(prefix = "p") {
-  return `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now().toString(36).slice(-4)}`;
+  return `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now()
+    .toString(36)
+    .slice(-4)}`;
 }
 
 export function nextDeviceIdForType(state: GraphState, type: string) {
@@ -124,7 +126,7 @@ export function moveDevice(
   if (opts?.snapToGrid) {
     const g = opts.gridSize ?? 16;
     return { ...d, x: Math.round(nx / g) * g, y: Math.round(ny / g) * g };
-    }
+  }
   return { ...d, x: nx, y: ny };
 }
 
@@ -146,41 +148,55 @@ export function addDevice(
   }
 ): GraphState {
   const {
-    type, count = 1, x = 80, y = 80,
+    type,
+    count = 1,
+    x = 80,
+    y = 80,
     w = 160,
     h,
     color = "#334155",
-    customNameBase, defaultPorts = [],
-    manufacturer, model,
+    customNameBase,
+    defaultPorts = [],
+    manufacturer,
+    model,
   } = payload;
 
   const normPorts = normalizePorts(defaultPorts);
-  const inCnt  = normPorts.filter(p => p.direction === "IN").length;
-  const outCnt = normPorts.filter(p => p.direction === "OUT").length;
-  const rows   = Math.max(inCnt, outCnt);
+  const inCnt = normPorts.filter((p) => p.direction === "IN").length;
+  const outCnt = normPorts.filter((p) => p.direction === "OUT").length;
+  const rows = Math.max(inCnt, outCnt);
 
   // Height with explicit top/bottom pads so last pin is comfortably inside
   const HEADER = 36;
   const TOP_PAD = 10;
   const BOT_PAD = 18;
   const ROW_SP = 24;
-  const autoH = HEADER + TOP_PAD + BOT_PAD + (rows > 1 ? (rows - 1) * ROW_SP : ROW_SP);
+  const autoH =
+    HEADER + TOP_PAD + BOT_PAD + (rows > 1 ? (rows - 1) * ROW_SP : ROW_SP);
 
   // Width so left/right labels never overlap
   const CHAR_W = Math.ceil(10 * 0.6); // PORT_FONT * 0.6
-  const leftLen  = normPorts.filter(p => p.direction === "IN").reduce((m,p) => Math.max(m, (p.name || "").length), 0);
-  const rightLen = normPorts.filter(p => p.direction === "OUT").reduce((m,p) => Math.max(m, (p.name || "").length), 0);
+  const leftLen = normPorts
+    .filter((p) => p.direction === "IN")
+    .reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const rightLen = normPorts
+    .filter((p) => p.direction === "OUT")
+    .reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const MIDDLE_GAP = 24;
-  const PIN_AND_TEXT = 2 * (7 + 9);   // PIN_INSET + text offset on both sides
-  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
+  const PIN_AND_TEXT = 2 * (7 + 9); // PIN_INSET + text offset on both sides
+  const autoW = Math.max(
+    160,
+    PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
+  );
 
-  let draft = { ...state };
+  // *** Fixed spread syntax here ***
+  let draft: GraphState = { ...state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
     draft = {
-      .draft,
+      ...draft,
       devices: [
-        .draft.devices,
+        ...draft.devices,
         {
           id,
           type,
@@ -200,21 +216,35 @@ export function addDevice(
   return draft;
 }
 
-export function deleteSelectedDevices(state: GraphState, selectedIds: Set<string>): GraphState {
-  const keep = new Set(state.devices.filter(d => !selectedIds.has(d.id)).map(d => d.id));
+export function deleteSelectedDevices(
+  state: GraphState,
+  selectedIds: Set<string>
+): GraphState {
+  const keep = new Set(
+    state.devices.filter((d) => !selectedIds.has(d.id)).map((d) => d.id)
+  );
   return {
-    devices: state.devices.filter(d => keep.has(d.id)),
-    connections: state.connections.filter(c => keep.has(c.from.deviceId) && keep.has(c.to.deviceId)),
+    devices: state.devices.filter((d) => keep.has(d.id)),
+    connections: state.connections.filter(
+      (c) => keep.has(c.from.deviceId) && keep.has(c.to.deviceId)
+    ),
   };
 }
 
-export function copySelectedDevices(state: GraphState, selectedIds: Set<string>) {
+export function copySelectedDevices(
+  state: GraphState,
+  selectedIds: Set<string>
+) {
   return state.devices
     .filter((d) => selectedIds.has(d.id))
-    .map((d) => ({ ...d, ports: d.ports.map(p => ({ ...p })) }));
+    .map((d) => ({ ...d, ports: d.ports.map((p) => ({ ...p })) }));
 }
 
-export function pasteDevices(state: GraphState, clipboard: Device[], offset = { x: 40, y: 40 }): GraphState {
+export function pasteDevices(
+  state: GraphState,
+  clipboard: Device[],
+  offset = { x: 40, y: 40 }
+): GraphState {
   let draft = withPortIds({ ...state });
   clipboard.forEach((d, i) => {
     const newId = nextDeviceIdForType(draft, d.type);
@@ -237,7 +267,11 @@ export function pasteDevices(state: GraphState, clipboard: Device[], offset = { 
 
 // OUT may connect to only one IN; each IN accepts only one.
 // No device-to-device; it's strictly pin-to-pin.
-export function addConnection(state: GraphState, from: ConnectionEnd, to: ConnectionEnd): GraphState {
+export function addConnection(
+  state: GraphState,
+  from: ConnectionEnd,
+  to: ConnectionEnd
+): GraphState {
   const fromDev = state.devices.find((d) => d.id === from.deviceId);
   const toDev = state.devices.find((d) => d.id === to.deviceId);
   if (!fromDev || !toDev) return state;
@@ -259,7 +293,8 @@ export function addConnection(state: GraphState, from: ConnectionEnd, to: Connec
 
   // forbid fan-out: OUT already used
   const outUsed = state.connections.some(
-    (c) => c.from.deviceId === from.deviceId && c.from.portName === from.portName
+    (c) =>
+      c.from.deviceId === from.deviceId && c.from.portName === from.portName
   );
   if (outUsed) return state;
 
