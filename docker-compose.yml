@@ -1,6 +1,6 @@
 services:
   backend:
-    image: myorg/leonardo-backend:latest
+    image: kikulik/leonardo-backend:latest
     container_name: leonardo-backend
     ports: ["10001:10001"]
     restart: unless-stopped
@@ -9,7 +9,7 @@ services:
       BUILD_ID: ${BUILD_ID}
 
   frontend:
-    image: myorg/leonardo-frontend:latest
+    image: kikulik/leonardo-frontend:latest
     container_name: leonardo-frontend
     depends_on: [backend]
     ports: ["10201:80"]
