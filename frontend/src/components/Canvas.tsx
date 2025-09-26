@@ -25,18 +25,15 @@ type Props = {
 const BOX_W = 160;
 const BOX_H = 80;
 const HEADER_H = 36;
-const PORT_D = 8;
-const PORT_R = PORT_D / 2;
-// Keep pins slightly inside the box so they visually touch it
-const PIN_INSET = 6;
+const PIN_INSET = 7;      // inside the box
+const PORT_FONT = 10;
 
-// Port center in WORLD coords (matches the visual pin positions exactly)
+// This *exact same* geometry is used in the inline device SVG and in the global connections overlay.
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const w = device.w ?? BOX_W;
   const h = device.h ?? BOX_H;
   const INs = (device.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (device.ports ?? []).filter((p) => p.direction === "OUT");
-
   const yFor = (idx: number, total: number) =>
     (device.y ?? 0) + HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
 
@@ -68,12 +65,12 @@ export function Canvas({
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // GRID overlay (view-space)
+  // GRID overlay in view-space
   const gridCell = Math.max(8, Math.round(24 * zoom));
   const gridPosX = ((pan.x % gridCell) + gridCell) % gridCell;
   const gridPosY = ((pan.y % gridCell) + gridCell) % gridCell;
 
-  // DRAG DEVICES (smooth)
+  // DRAG DEVICES
   const [drag, setDrag] = useState<{
     ids: string[];
     startX: number;
@@ -134,7 +131,7 @@ export function Canvas({
     } else if (p.direction === "IN" && pending) {
       const next = addConnection(graph, pending.from, { deviceId: d.id, portName: p.name });
       onChange(next);
-      setPending(null);
+      setPending(null); // boom!
     }
   }
 
@@ -172,6 +169,88 @@ export function Canvas({
       window.removeEventListener("mouseup", onUp);
     };
   }, [resizing, graph, onChange, zoom]);
+
+  // helper: render pin + label using SVG so layout math = connection math
+  function DevicePortsSVG({ d }: { d: Device }) {
+    const w = d.w ?? BOX_W;
+    const h = d.h ?? BOX_H;
+    const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
+    const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
+    const yFor = (idx: number, total: number) =>
+      HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
+
+    const pendingFrom =
+      pending && pending.from.deviceId === d.id ? pending.from.portName : null;
+
+    return (
+      <svg
+        width={w}
+        height={h}
+        viewBox={`0 0 ${w} ${h}`}
+        className="absolute inset-0"
+        style={{ pointerEvents: "none" }} // re-enable on circles
+      >
+        {/* INs (left) */}
+        {INs.map((p, idx) => {
+          const cy = yFor(idx, INs.length);
+          const cx = PIN_INSET;
+          const selected = false; // only OUT gets "pending" highlight
+          return (
+            <g key={p.id} pointerEvents="all" className="cursor-crosshair" onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={5}
+                fill="#10b981"
+                stroke="white"
+                strokeWidth={selected ? 3 : 2}
+                opacity={1}
+              />
+              <text
+                x={cx + 9}
+                y={cy + 0.5}
+                fontSize={PORT_FONT}
+                fill="#e2e8f0"
+                dominantBaseline="middle"
+              >
+                {p.name}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* OUTs (right) */}
+        {OUTs.map((p, idx) => {
+          const cy = yFor(idx, OUTs.length);
+          const cx = w - PIN_INSET;
+          const selected = pendingFrom === p.name;
+          return (
+            <g key={p.id} pointerEvents="all" className="cursor-crosshair" onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={selected ? 6 : 5}
+                fill={selected ? "#38bdf8" : "#38bdf8"}
+                stroke={selected ? "#60a5fa" : "white"}
+                strokeWidth={selected ? 3 : 2}
+                filter={selected ? "drop-shadow(0 0 4px rgba(59,130,246,0.9))" : "none"}
+              />
+              <text
+                x={cx - 9}
+                y={cy + 0.5}
+                fontSize={PORT_FONT}
+                fill="#e2e8f0"
+                dominantBaseline="middle"
+                textAnchor="end"
+              >
+                {p.name}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    );
+  }
 
   return (
     <div className="relative w-full h-full select-none" onWheel={onWheel}>
@@ -211,7 +290,7 @@ export function Canvas({
           transformOrigin: "0 0",
         }}
       >
-        {/* connections */}
+        {/* connections overlay — uses same geometry as DevicePortsSVG */}
         <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
           {graph.connections.map((c) => {
             const Adev = deviceMap.get(c.from.deviceId)!;
@@ -219,11 +298,9 @@ export function Canvas({
             if (!Adev || !Bdev) return null;
             const A = portWorldPos(Adev, c.from.portName, "OUT");
             const B = portWorldPos(Bdev, c.to.portName, "IN");
-            const mx = (A.x + B.x) / 2;
-            const d = `M ${A.x},${A.y} C ${mx},${A.y} ${mx},${B.y} ${B.x},${B.y}`;
-            return (
-              <path key={c.id} d={d} fill="none" stroke="rgba(56,189,248,0.95)" strokeWidth={2} />
-            );
+            const midX = (A.x + B.x) / 2;
+            const d = `M ${A.x},${A.y} C ${midX},${A.y} ${midX},${B.y} ${B.x},${B.y}`;
+            return <path key={c.id} d={d} fill="none" stroke="rgba(56,189,248,0.95)" strokeWidth={2} />;
           })}
         </svg>
 
@@ -233,11 +310,6 @@ export function Canvas({
           const h = d.h ?? BOX_H;
           const selected = selectedIds.has(d.id);
           const deviceColor = d.color || "#334155";
-          const INs = (d.ports ?? []).filter(p => p.direction === "IN");
-          const OUTs = (d.ports ?? []).filter(p => p.direction === "OUT");
-
-          const yFor = (idx: number, total: number) =>
-            HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
 
           return (
             <div
@@ -250,7 +322,9 @@ export function Canvas({
                 height: h,
                 background: deviceColor,
                 border: "1px solid rgba(148,163,184,0.35)",
-                boxShadow: selected ? "0 0 0 2px rgba(59,130,246,0.9), 0 0 18px rgba(59,130,246,0.5)" : "0 4px 12px rgba(0,0,0,0.25)",
+                boxShadow: selected
+                  ? "0 0 0 2px rgba(59,130,246,0.9), 0 0 18px rgba(59,130,246,0.5)"
+                  : "0 4px 12px rgba(0,0,0,0.25)",
                 transition: "box-shadow 120ms ease",
               }}
               onMouseDown={(e) => {
@@ -284,65 +358,9 @@ export function Canvas({
                 </div>
               </div>
 
-              {/* ports area */}
-              <div className="relative w-full" style={{ height: `calc(100% - ${HEADER_H}px)` }}>
-                {/* IN pins (left) */}
-                {INs.map((p, idx) => {
-                  const cy = yFor(idx, INs.length);
-                  return (
-                    <React.Fragment key={`IN-${idx}-${p.name}`}>
-                      {/* dot */}
-                      <div
-                        className="absolute cursor-crosshair"
-                        style={{
-                          left: PIN_INSET - PORT_R,
-                          top: cy - PORT_R,
-                          width: PORT_D, height: PORT_D,
-                        }}
-                        onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
-                        title={`${p.type} IN: ${p.name}`}
-                      >
-                        <div className="w-full h-full rounded-full border border-emerald-300 bg-emerald-400 shadow-sm" />
-                      </div>
-                      {/* label (inside, to the right of the pin) */}
-                      <div
-                        className="absolute pointer-events-none text-[10px] text-white/90"
-                        style={{ left: PIN_INSET + PORT_R + 6, top: cy - 7 }}
-                      >
-                        {p.name}
-                      </div>
-                    </React.Fragment>
-                  );
-                })}
-
-                {/* OUT pins (right) */}
-                {OUTs.map((p, idx) => {
-                  const cy = yFor(idx, OUTs.length);
-                  return (
-                    <React.Fragment key={`OUT-${idx}-${p.name}`}>
-                      {/* dot */}
-                      <div
-                        className="absolute cursor-crosshair"
-                        style={{
-                          left: w - (PIN_INSET + PORT_R),
-                          top: cy - PORT_R,
-                          width: PORT_D, height: PORT_D,
-                        }}
-                        onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
-                        title={`${p.type} OUT: ${p.name}`}
-                      >
-                        <div className="w-full h-full rounded-full border border-sky-300 bg-sky-400 shadow-sm" />
-                      </div>
-                      {/* label (inside, to the left of the pin) */}
-                      <div
-                        className="absolute pointer-events-none text-[10px] text-white/90"
-                        style={{ right: PIN_INSET + PORT_R + 6, top: cy - 7 }}
-                      >
-                        {p.name}
-                      </div>
-                    </React.Fragment>
-                  );
-                })}
+              {/* ports rendered in a device-local SVG to keep geometry exact */}
+              <div className="relative w-full h-full">
+                <DevicePortsSVG d={d} />
               </div>
 
               {/* resize handle */}
