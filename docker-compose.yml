@@ -18,5 +18,8 @@ services:
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT}:10201:80"
+      target: 80
+        published: ${FRONTEND_PORT:-0}
+        protocol: tcp
+        mode: host
     restart: unless-stopped
