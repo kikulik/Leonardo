@@ -18,13 +18,26 @@ import {
 type Mode = "select" | "pan" | "connect";
 const LS_KEY = "leonardo.graph.v1";
 
+function isTypingTarget(target: EventTarget | null) {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = (el.tagName || "").toLowerCase();
+  const isFormField =
+    tag === "input" ||
+    tag === "textarea" ||
+    (el as HTMLElement).isContentEditable === true ||
+    // allow typing into form controls (select still shouldn’t trigger delete)
+    tag === "select";
+  return isFormField;
+}
+
 export default function App() {
   const [graph, setGraph] = useState<GraphState>({ devices: [], connections: [] });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
-  const [snapEnabled, setSnapEnabled] = useState(true); // NEW
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [mode, setMode] = useState<Mode>("select");
 
   const [zoom, setZoom] = useState(1);
@@ -38,20 +51,18 @@ export default function App() {
   const [addOpen, setAddOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ---------- load autosave ----------
+  // load
   useEffect(() => {
     try {
       const txt = localStorage.getItem(LS_KEY);
       if (txt) setGraph(JSON.parse(txt));
-    } catch { /* ignore */ }
+    } catch {}
   }, []);
 
-  // ---------- autosave (debounced) ----------
+  // autosave
   useEffect(() => {
     const id = window.setTimeout(() => {
-      try {
-        localStorage.setItem(LS_KEY, JSON.stringify(graph));
-      } catch { /* ignore */ }
+      try { localStorage.setItem(LS_KEY, JSON.stringify(graph)); } catch {}
     }, 250);
     return () => clearTimeout(id);
   }, [graph]);
@@ -74,9 +85,12 @@ export default function App() {
   };
   const clearSelection = () => setSelectedIds(new Set());
 
-  // ---------- keyboard ----------
+  // keyboard (guard when typing in inputs)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return; // <-- IMPORTANT GUARD
+
+      // undo
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (undoStack.current.length) {
@@ -87,6 +101,7 @@ export default function App() {
         }
         return;
       }
+      // redo
       if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
         e.preventDefault();
         if (redoStack.current.length) {
@@ -97,17 +112,20 @@ export default function App() {
         }
         return;
       }
+      // copy
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
         e.preventDefault();
         setClipboard(copySelectedDevices(graph, selectedIds));
         return;
       }
+      // paste
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
         e.preventDefault();
         if (!clipboard.length) return;
         updateGraph(pasteDevices(graph, clipboard));
         return;
       }
+      // delete selection
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIds.size) {
           e.preventDefault();
@@ -116,11 +134,11 @@ export default function App() {
         }
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true } as any);
   }, [graph, selectedIds, clipboard]);
 
-  // ---------- save/load file ----------
+  // save/load
   const handleSaveFile = () => saveProject(graph, "project.json");
   const onFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
     const f = e.target.files?.[0];
@@ -135,7 +153,7 @@ export default function App() {
 
   const resetView = () => { setPan({ x: 0, y: 0 }); setZoom(1); };
 
-  // ---------- add equipment (modal) ----------
+  // add equipment
   const handleAddSubmit = (p: {
     type: string; quantity: number; customNameBase?: string;
     manufacturer?: string; model?: string; w?: number; h?: number; color?: string;
@@ -164,7 +182,7 @@ export default function App() {
     setAddOpen(false);
   };
 
-  // ---------- simple mock AI ----------
+  // simple AI
   const parseAi = (text: string) => {
     const t = text.trim().toLowerCase();
     const aliases: Record<string, string> = {
@@ -210,7 +228,7 @@ export default function App() {
     setAiPrompt("");
   };
 
-  // ---------- toolbar helpers ----------
+  // toolbar helpers
   const handleCopy = () => setClipboard(copySelectedDevices(graph, selectedIds));
   const handlePaste = () => clipboard.length && updateGraph(pasteDevices(graph, clipboard));
   const handleDelete = () => {
@@ -303,7 +321,7 @@ export default function App() {
               if (v.zoom !== undefined) setZoom(v.zoom);
               if (v.pan !== undefined) setPan(v.pan);
             }}
-            snapEnabled={snapEnabled} // NEW
+            snapEnabled={snapEnabled}
           />
         </main>
 
