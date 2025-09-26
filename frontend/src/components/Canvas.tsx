@@ -39,23 +39,25 @@ const BODY_PAD_BOTTOM = 15;
 // ===== Single source of truth for pin positions =====
 
 // Y inside the device (local SVG coords) for pin #idx (0..count-1)
+// This now properly accounts for the SVG coordinate system
 function pinYLocal(boxH: number, count: number, idx: number): number {
-  // Body area (below header)
+  // Body area (below header) - this is where pins can be placed
   const bodyTop = HEADER_H;
   const bodyH = Math.max(0, boxH - HEADER_H);
 
-  // Inner area where pins may appear
+  // Inner area where pins may appear (with padding)
   const innerTop = bodyTop + BODY_PAD_TOP;
   const innerH = Math.max(0, bodyH - (BODY_PAD_TOP + BODY_PAD_BOTTOM));
 
   if (count <= 0) return innerTop + innerH / 2;
+  if (count === 1) return innerTop + innerH / 2;
 
-  // Even spacing at k/(n+1)
-  const step = innerH / (count + 1);
-  return innerTop + step * (idx + 1);
+  // Even spacing: distribute pins evenly within the inner area
+  const step = innerH / (count - 1);
+  return innerTop + step * idx;
 }
 
-// World position for a given port
+// World position for a given port - now uses consistent coordinate system
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const w = device.w ?? BOX_W;
   const h = device.h ?? BOX_H;
@@ -64,27 +66,35 @@ function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
 
   if (dir === "IN") {
     const idx = INs.findIndex((p) => p.name === portName);
-    return { x: (device.x ?? 0) + PIN_INSET, y: (device.y ?? 0) + pinYLocal(h, INs.length, idx) };
+    if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
+    return { 
+      x: (device.x ?? 0) + PIN_INSET, 
+      y: (device.y ?? 0) + pinYLocal(h, INs.length, idx) 
+    };
   } else {
     const idx = OUTs.findIndex((p) => p.name === portName);
-    return { x: (device.x ?? 0) + w - PIN_INSET, y: (device.y ?? 0) + pinYLocal(h, OUTs.length, idx) };
+    if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
+    return { 
+      x: (device.x ?? 0) + w - PIN_INSET, 
+      y: (device.y ?? 0) + pinYLocal(h, OUTs.length, idx) 
+    };
   }
 }
 
-// Minimum body height/width so labels don’t overlap when resizing
+// Minimum body height/width so labels don't overlap when resizing
 function minSizeForDevice(d: Device) {
   const INs = (d.ports ?? []).filter(p => p.direction === "IN");
   const OUTs = (d.ports ?? []).filter(p => p.direction === "OUT");
-  const rows = Math.max(INs.length, OUTs.length);
+  const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // Height: header + 15 top + 15 bottom + spacing for rows (n+1 gaps)
-  const ROW_SP = 24;
-  const innerH = (rows + 1) * ROW_SP;
-  const minH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + innerH);
+  // Height calculation: need space for all ports plus padding
+  const minPortSpacing = 24; // minimum space between ports
+  const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
+  const minH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
 
   // Width: text width on both sides + pins + middle gap
   const CHAR_W = Math.ceil(PORT_FONT * 0.6);
-  const leftLen  = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const MIDDLE_GAP = 24;
   const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
@@ -224,18 +234,18 @@ export function Canvas({
 
     const aDev = graph.devices.find(x => x.id === pending.from.deviceId)!;
     const aPort = aDev.ports.find(pp => pp.name === pending.from.portName)!;
-    const bDev  = d;
+    const bDev = d;
     const bPort = p;
 
     let fromEnd: { deviceId: string; portName: string };
-    let toEnd:   { deviceId: string; portName: string };
+    let toEnd: { deviceId: string; portName: string };
 
     if (aPort.direction === "OUT" && bPort.direction === "IN") {
       fromEnd = { deviceId: aDev.id, portName: aPort.name };
-      toEnd   = { deviceId: bDev.id, portName: bPort.name };
+      toEnd = { deviceId: bDev.id, portName: bPort.name };
     } else if (aPort.direction === "IN" && bPort.direction === "OUT") {
       fromEnd = { deviceId: bDev.id, portName: bPort.name };
-      toEnd   = { deviceId: aDev.id, portName: aPort.name };
+      toEnd = { deviceId: aDev.id, portName: aPort.name };
     } else {
       setPending({ from: { deviceId: d.id, portName: p.name } });
       return;
@@ -246,7 +256,7 @@ export function Canvas({
     setCursorWorld(null);
   }
 
-  // Device-local pins — SVG spans the whole box; we DO NOT subtract the header
+  // Device-local pins — SVG spans the whole box
   function DevicePortsSVG({ d }: { d: Device }) {
     const w = d.w ?? BOX_W;
     const h = d.h ?? BOX_H;
@@ -322,7 +332,7 @@ export function Canvas({
           if (pending && wrapRef.current) {
             const rect = wrapRef.current.getBoundingClientRect();
             const worldX = (e.clientX - rect.left) / zoom - pan.x;
-            const worldY = (e.clientY - rect.top)  / zoom - pan.y;
+            const worldY = (e.clientY - rect.top) / zoom - pan.y;
             setCursorWorld({ x: worldX, y: worldY });
           }
           if (!panning) return;
@@ -340,8 +350,8 @@ export function Canvas({
         {/* Connection overlay — same geometry as DevicePortsSVG */}
         <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
           {graph.connections.map((c) => {
-            const Adev = deviceMap.get(c.from.deviceId)!;
-            const Bdev = deviceMap.get(c.to.deviceId)!;
+            const Adev = deviceMap.get(c.from.deviceId);
+            const Bdev = deviceMap.get(c.to.deviceId);
             if (!Adev || !Bdev) return null;
             const A = portWorldPos(Adev, c.from.portName, "OUT");
             const B = portWorldPos(Bdev, c.to.portName, "IN");
