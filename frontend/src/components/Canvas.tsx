@@ -34,11 +34,11 @@ const PORT_FONT = 10;
 const BODY_PAD_TOP = 15;
 const BODY_PAD_BOTTOM = 15;
 
-// Preferred vertical gap between pins (used to keep groups centered)
+// Preferred vertical gap between adjacent pins (keeps clusters centered)
 const PREFERRED_GAP = 28;
 
-/** Pin Y inside the BODY (no header). Center cluster with preferred gap;
- *  if it doesn't fit, fall back to evenly-compressed spacing. */
+/** Pin Y inside the BODY (no header).
+ *  Center clusters using a preferred gap; if they don't fit, compress evenly with margins. */
 function pinYLocalBody(bodyH: number, count: number, idx: number): number {
   const innerTop = BODY_PAD_TOP;
   const innerH = Math.max(0, bodyH - (BODY_PAD_TOP + BODY_PAD_BOTTOM));
@@ -46,14 +46,14 @@ function pinYLocalBody(bodyH: number, count: number, idx: number): number {
   if (count <= 0) return innerTop + innerH / 2;
   if (count === 1) return innerTop + innerH / 2;
 
-  // Try to keep pins centered with a comfortable preferred gap.
+  // Try centered cluster with preferred gap
   const neededSpan = (count - 1) * PREFERRED_GAP;
   if (neededSpan <= innerH) {
     const start = innerTop + (innerH - neededSpan) / 2;
     return start + idx * PREFERRED_GAP;
   }
 
-  // Not enough space → compress: equal spacing across inner height (keeps margins).
+  // Not enough space → compress across the inner height with margins
   const step = innerH / (count + 1);
   return innerTop + step * (idx + 1);
 }
@@ -76,13 +76,12 @@ function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   }
 }
 
-/** Minimum BODY size (no header in this math) */
+/** Minimum BODY size (no header in this math) — sized to allow preferred gaps for small counts. */
 function minBodySizeForDevice(d: Device) {
   const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
   const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // Give enough inner space for centered cluster with preferred gaps.
   const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * PREFERRED_GAP : 20;
   const minH = Math.max(80, BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
 
