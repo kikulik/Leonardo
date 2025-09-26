@@ -158,28 +158,29 @@ export function addDevice(
   } = payload;
 
   const normPorts = normalizePorts(defaultPorts);
-  const INs  = normPorts.filter(p => p.direction === "IN");
+  const INs = normPorts.filter(p => p.direction === "IN");
   const OUTs = normPorts.filter(p => p.direction === "OUT");
-  const rows = Math.max(INs.length, OUTs.length);
+  const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // --- same sizing logic as Canvas ---
+  // --- Updated sizing logic to match Canvas calculations ---
   const HEADER_H = 36;
   const BODY_PAD_TOP = 15;
   const BODY_PAD_BOTTOM = 15;
-  const ROW_SP = 24;
+  
+  // Improved height calculation: ensure adequate spacing between ports
+  const minPortSpacing = 24; // minimum space between ports
+  const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
+  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
 
-  const innerH = (rows + 1) * ROW_SP;
-  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + innerH);
-
-  const CHAR_W = Math.ceil(10 * 0.6);
-  const leftLen  = INs.reduce((m,p) => Math.max(m, (p.name || "").length), 0);
-  const rightLen = OUTs.reduce((m,p) => Math.max(m, (p.name || "").length), 0);
+  // Width calculation: ensure text fits properly
+  const CHAR_W = Math.ceil(10 * 0.6); // approximate character width for PORT_FONT=10
+  const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const MIDDLE_GAP = 24;
   const PIN_INSET = 7;
-  const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
+  const PIN_AND_TEXT = 2 * (PIN_INSET + 9); // space for pin circles and text spacing
   const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
-  // -----------------------------------
-
+  
   let draft = { ...state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
