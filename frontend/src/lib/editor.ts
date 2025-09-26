@@ -68,7 +68,9 @@ const TYPE_PREFIX: Record<string, string> = {
 };
 
 function uid(prefix = "p") {
-  return `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now().toString(36).slice(-4)}`;
+  return `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now()
+    .toString(36)
+    .slice(-4)}`;
 }
 
 export function nextDeviceIdForType(state: GraphState, type: string) {
@@ -167,7 +169,7 @@ export function addDevice(
 
   const minPortSpacing = 24;
   const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
-  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight); // :contentReference[oaicite:2]{index=2}
+  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
 
   const CHAR_W = Math.ceil(10 * 0.6); // PORT_FONT=10
   const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
@@ -175,7 +177,7 @@ export function addDevice(
   const MIDDLE_GAP = 24;
   const PIN_INSET = 7;
   const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
-  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP); // :contentReference[oaicite:3]{index=3}
+  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
 
   let draft: GraphState = withPortIds({ ...state });
   for (let i = 0; i < count; i++) {
@@ -242,7 +244,7 @@ export function pasteDevices(
   return draft;
 }
 
-// OUT may connect to only one IN; each IN accepts only one; strictly pin→pin.
+// OUT may connect to only one IN; each IN accepts only one.
 export function addConnection(state: GraphState, from: ConnectionEnd, to: ConnectionEnd): GraphState {
   const fromDev = state.devices.find((d) => d.id === from.deviceId);
   const toDev = state.devices.find((d) => d.id === to.deviceId);
