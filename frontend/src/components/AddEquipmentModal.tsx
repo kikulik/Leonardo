@@ -19,13 +19,13 @@ type Props = {
 export default function AddEquipmentModal({ open, onClose, onSubmit }: Props) {
   const [type, setType] = useState("camera");
   const [quantity, setQuantity] = useState(1);
-  const [customNameBase, setCustomNameBase] = useState("Device");
+  const [customNameBase, setCustomNameBase] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [model, setModel] = useState("");
   const [w, setW] = useState(160);
   const [h, setH] = useState(80);
   const [inType, setInType] = useState("SDI");
-  const [inQty, setInQty] = useState(1);
+  const [inQty, setInQty] = useState(0);
   const [outType, setOutType] = useState("SDI");
   const [outQty, setOutQty] = useState(1);
 
@@ -53,7 +53,7 @@ export default function AddEquipmentModal({ open, onClose, onSubmit }: Props) {
           </div>
 
           <div>
-            <label className="text-xs text-slate-300">Custom Name (base)</label>
+            <label className="text-xs text-slate-300">Custom Name (optional)</label>
             <input value={customNameBase} onChange={(e) => setCustomNameBase(e.target.value)}
               className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
           </div>
