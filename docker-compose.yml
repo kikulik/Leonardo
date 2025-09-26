@@ -1,29 +1,11 @@
 services:
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      args:
-        BUILD_ID: ${BUILD_ID}
-    container_name: leonardo-backend
-    ports:
-      - "10001:10001"
+    image: ghcr.io/kikulik/leonardo-backend:${BACKEND_TAG}
+    ports: ["${BACKEND_PORT}:10001"]
     restart: unless-stopped
-    environment:
-      PYTHONUNBUFFERED: "1"
-      BUILD_ID: ${BUILD_ID}
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        BUILD_ID: ${BUILD_ID}
-    container_name: leonardo-frontend
-    depends_on:
-      - backend
-    ports:
-      - "10201:80"
+    image: ghcr.io/kikulik/leonardo-frontend:${FRONTEND_TAG}
+    depends_on: [backend]
+    ports: ["${FRONTEND_PORT}:10201"]
     restart: unless-stopped
-    environment:
-      BUILD_ID: ${BUILD_ID}
