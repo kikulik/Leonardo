@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import type { GraphState } from "../lib/editor";
+import type { GraphState, Device } from "../lib/editor";
 import { clampZoom, nextConnectionIdFor } from "../lib/editor";
-
-type Device = GraphState["devices"][number];
 
 type Mode = "select" | "pan" | "connect";
 
@@ -22,9 +20,22 @@ type Props = {
 
 const BOX_W = 160;
 const BOX_H = 80;
-const GAP_X = 40;
-const GAP_Y = 40;
-const COLS = 4;
+
+/** Port endpoint in WORLD coordinates (unscaled/untranslated) */
+function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
+  const w = device.w ?? BOX_W;
+  const h = device.h ?? BOX_H;
+  const left = (device.ports ?? []).filter((p) => p.direction === "IN");
+  const right = (device.ports ?? []).filter((p) => p.direction === "OUT");
+  if (dir === "IN") {
+    const idx = left.findIndex((p) => p.name === portName);
+    const y = ((idx + 1) * h) / (left.length + 1);
+    return { x: (device.x ?? 0), y: (device.y ?? 0) + y };
+  }
+  const idx = right.findIndex((p) => p.name === portName);
+  const y = ((idx + 1) * h) / (right.length + 1);
+  return { x: (device.x ?? 0) + w, y: (device.y ?? 0) + y };
+}
 
 export function Canvas({
   graph,
@@ -46,37 +57,17 @@ export function Canvas({
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // compute positions (auto if missing) + massive world size so grid is always visible
-  const { positioned, worldW, worldH } = useMemo(() => {
-    const out = devices.map((d, i) => {
-      if (typeof d.x === "number" && typeof d.y === "number")
-        return { ...d, w: d.w ?? BOX_W, h: d.h ?? BOX_H };
-      const col = i % COLS;
-      const row = Math.floor(i / COLS);
-      const x = 40 + col * (BOX_W + GAP_X);
-      const y = 40 + row * (BOX_H + GAP_Y);
-      return { ...d, x, y, w: d.w ?? BOX_W, h: d.h ?? BOX_H };
-    });
+  // ----- GRID overlay (view-space), always fills screen -----
+  const gridCell = Math.max(8, Math.round(24 * zoom)); // scale with zoom
+  const gridPosX = ((pan.x % gridCell) + gridCell) % gridCell;
+  const gridPosY = ((pan.y % gridCell) + gridCell) % gridCell;
 
-    // “infinite” world
-    return {
-      positioned: out,
-      worldW: 100000,
-      worldH: 100000,
-    };
-  }, [devices]);
-
-  const centerOf = (d: Device) => ({
-    cx: (d.x ?? 0) + (d.w ?? BOX_W) / 2,
-    cy: (d.y ?? 0) + (d.h ?? BOX_H) / 2,
-  });
-
-  // ---- drag device(s) ----
+  // ----- DRAG DEVICES -----
   const [drag, setDrag] = useState<{
     ids: string[];
     startX: number;
     startY: number;
-    orig: { [id: string]: { x: number; y: number } };
+    orig: Record<string, { x: number; y: number }>;
   } | null>(null);
 
   useEffect(() => {
@@ -84,7 +75,6 @@ export function Canvas({
       if (!drag || !graph || !onChange) return;
       const dx = (e.clientX - drag.startX) / zoom;
       const dy = (e.clientY - drag.startY) / zoom;
-
       const nextDevices = graph.devices.map((d) =>
         drag.ids.includes(d.id)
           ? { ...d, x: Math.max(0, drag.orig[d.id].x + dx), y: Math.max(0, drag.orig[d.id].y + dy) }
@@ -105,14 +95,14 @@ export function Canvas({
     };
   }, [drag, graph, onChange, zoom]);
 
-  // ---- pan/zoom ----
+  // ----- PAN / ZOOM -----
   const [panning, setPanning] = useState<{ sx: number; sy: number; px: number; py: number } | null>(null);
 
   const onWheel: React.WheelEventHandler = (e) => {
     if (!onViewChange) return;
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
-    const nextZoom = clampZoom(zoom * factor);
-    if (nextZoom !== zoom) onViewChange({ zoom: nextZoom });
+    const next = clampZoom(zoom * factor);
+    if (next !== zoom) onViewChange({ zoom: next });
   };
 
   const onMouseDownWorld: React.MouseEventHandler<HTMLDivElement> = (e) => {
@@ -144,25 +134,22 @@ export function Canvas({
 
   const onContextMenu: React.MouseEventHandler = (e) => e.preventDefault();
 
-  // ---- selection helpers ----
+  // ----- SELECTION -----
   const onBackgroundClick = () => onClearSelection?.();
 
-  // ---- linking ----
-  type PortRef = { deviceId: string; portName: string; dir: "IN" | "OUT"; x: number; y: number };
+  // ----- LINKING (OUT→IN) -----
+  type PortRef = { deviceId: string; portName: string; dir: "IN" | "OUT" };
   const [linkFrom, setLinkFrom] = useState<PortRef | null>(null);
-  const [mouse, setMouse] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [mouseWorld, setMouseWorld] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const toWorld = (clientX: number, clientY: number) => {
     const rect = (wrapRef.current as HTMLDivElement).getBoundingClientRect();
-    const sx = clientX - rect.left - pan.x;
-    const sy = clientY - rect.top - pan.y;
-    return { x: sx / zoom, y: sy / zoom };
+    return { x: (clientX - rect.left - pan.x) / zoom, y: (clientY - rect.top - pan.y) / zoom };
   };
 
   const tryFinishLink = (to: PortRef) => {
     if (!graph || !onChange || !linkFrom) return;
-    const a = linkFrom.dir;
-    const b = to.dir;
+    const a = linkFrom.dir, b = to.dir;
     const from = a === "OUT" ? linkFrom : to;
     const dest = a === "OUT" ? to : linkFrom;
     if (from.dir !== "OUT" || dest.dir !== "IN") return;
@@ -173,195 +160,195 @@ export function Canvas({
       ...graph,
       connections: [
         ...graph.connections,
-        {
-          id,
-          from: { deviceId: from.deviceId, portName: from.portName },
-          to: { deviceId: dest.deviceId, portName: dest.portName },
-        },
+        { id, from: { deviceId: from.deviceId, portName: from.portName }, to: { deviceId: dest.deviceId, portName: dest.portName } },
       ],
     });
+    setLinkFrom(null);
   };
 
   const onMouseMoveWorld: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    const w = toWorld(e.clientX, e.clientY);
-    setMouse(w);
+    setMouseWorld(toWorld(e.clientX, e.clientY));
   };
 
+  // ----- RENDER -----
   return (
     <div
       ref={wrapRef}
+      className="flex-1 min-h-0 rounded-2xl border border-slate-700 bg-transparent relative overflow-hidden"
       onWheel={onWheel}
       onContextMenu={onContextMenu}
       onClick={(e) => e.target === wrapRef.current && onBackgroundClick()}
-      className="flex-1 min-h-0 rounded-2xl border border-slate-700 bg-slate-900/40 relative overflow-hidden"
     >
-      {/* world */}
+      {/* GRID overlay (screen-space) */}
+      {showGrid && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundImage: `
+              linear-gradient(to right, rgba(148,163,184,0.12) 1px, transparent 1px),
+              linear-gradient(to bottom, rgba(148,163,184,0.12) 1px, transparent 1px)
+            `,
+            backgroundSize: `${gridCell}px ${gridCell}px, ${gridCell}px ${gridCell}px`,
+            backgroundPosition: `${gridPosX}px ${gridPosY}px, ${gridPosX}px ${gridPosY}px`,
+          }}
+        />
+      )}
+
+      {/* WORLD (transformed) */}
       <div
         className="absolute inset-0"
         onMouseDown={onMouseDownWorld}
         onMouseMove={onMouseMoveWorld}
-        style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          transformOrigin: "0 0",
-          backgroundImage: showGrid
-            ? `
-                linear-gradient(to right, rgba(148,163,184,0.12) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(148,163,184,0.12) 1px, transparent 1px)
-              `
-            : "none",
-          backgroundSize: showGrid ? "24px 24px, 24px 24px" : undefined,
-        }}
+        style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0" }}
       >
-        <div style={{ width: worldW, height: worldH, position: "relative" }}>
-          {/* connections */}
-          <svg width={worldW} height={worldH} className="absolute inset-0 pointer-events-none">
-            {(graph?.connections ?? []).map((c) => {
-              const a = deviceMap.get(c.from.deviceId);
-              const b = deviceMap.get(c.to.deviceId);
-              if (!a || !b) return null;
-              const A = centerOf(a);
-              const B = centerOf(b);
-              return (
-                <line
-                  key={c.id}
-                  x1={A.cx}
-                  y1={A.cy}
-                  x2={B.cx}
-                  y2={B.cy}
-                  stroke="rgba(96,165,250,0.75)"
-                  strokeWidth={2}
-                />
-              );
-            })}
-            {linkFrom && (
+        {/* connections */}
+        <svg width={200000} height={200000} className="absolute inset-0 pointer-events-none">
+          {(graph?.connections ?? []).map((c) => {
+            const Adev = deviceMap.get(c.from.deviceId);
+            const Bdev = deviceMap.get(c.to.deviceId);
+            if (!Adev || !Bdev) return null;
+            const A = portWorldPos(Adev, c.from.portName, "OUT");
+            const B = portWorldPos(Bdev, c.to.portName, "IN");
+            return (
               <line
-                x1={linkFrom.x}
-                y1={linkFrom.y}
-                x2={mouse.x}
-                y2={mouse.y}
-                stroke="rgba(251,191,36,0.9)"
-                strokeDasharray="4 4"
+                key={c.id}
+                x1={A.x}
+                y1={A.y}
+                x2={B.x}
+                y2={B.y}
+                stroke="rgba(96,165,250,0.85)"
                 strokeWidth={2}
               />
-            )}
-          </svg>
-
-          {/* devices */}
-          {positioned.map((d) => {
-            const isSel = !!selectedIds?.has(d.id);
-            const w = d.w ?? BOX_W;
-            const h = d.h ?? BOX_H;
-            const left = (d.ports ?? []).filter((p) => p.direction === "IN");
-            const right = (d.ports ?? []).filter((p) => p.direction === "OUT");
-
-            return (
-              <div
-                key={d.id}
-                style={{ left: d.x, top: d.y, width: w, height: h, cursor: mode === "pan" ? "grab" : "default" }}
-                className={`absolute rounded-xl border shadow-sm transition-all
-                  ${isSel ? "border-blue-400 ring-2 ring-blue-400/40" : "border-slate-600"}
-                  bg-slate-800/80 hover:shadow-md select-none`}
-                onMouseDown={(e) => {
-                  if (mode !== "select") return;
-                  if (e.button !== 0) return;
-                  e.stopPropagation();
-                  const additive = e.ctrlKey || e.metaKey || e.shiftKey;
-                  onToggleSelect?.(d.id, additive);
-                  // start drag for all selected
-                  const ids = Array.from(new Set([d.id, ...(selectedIds ? Array.from(selectedIds) : [])]));
-                  const orig: any = {};
-                  ids.forEach((id) => {
-                    const dev = deviceMap.get(id)!;
-                    orig[id] = { x: dev.x, y: dev.y };
-                  });
-                  setDrag({ ids, startX: e.clientX, startY: e.clientY, orig });
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  onToggleSelect?.(d.id, false);
-                }}
-                onMouseUp={() => setLinkFrom(null)}
-              >
-                {/* Header with ID */}
-                <div className="px-3 pt-2 text-sm font-semibold text-slate-100 truncate">{d.id}</div>
-                <div className="px-3 text-[11px] text-slate-400 flex gap-2">
-                  <span>{d.type ?? "device"}</span>
-                  {(d as any).manufacturer || (d as any).model ? (
-                    <span className="text-slate-500">• {(d as any).manufacturer ?? ""} {(d as any).model ?? ""}</span>
-                  ) : null}
-                </div>
-
-                {/* Ports */}
-                {/* Left (IN) */}
-                <div className="absolute left-0 top-0 bottom-0 w-3">
-                  {left.map((p, idx) => {
-                    const y = ((idx + 1) * h) / (left.length + 1);
-                    const pr = { deviceId: d.id, portName: p.name, dir: "IN" as const, x: (d.x ?? 0), y: (d.y ?? 0) + y };
-                    return (
-                      <div
-                        key={p.name}
-                        className="absolute -left-[6px]"
-                        style={{ top: y - 4 }}
-                        title={`${p.name} (${p.type})`}
-                        onMouseDown={(e) => {
-                          if (mode !== "connect") return;
-                          e.stopPropagation();
-                          setLinkFrom(pr);
-                        }}
-                        onMouseUp={(e) => {
-                          if (mode !== "connect") return;
-                          e.stopPropagation();
-                          if (linkFrom) {
-                            tryFinishLink(pr);
-                            setLinkFrom(null);
-                          }
-                        }}
-                      >
-                        <div className="w-2 h-2 rounded-full bg-emerald-400 border border-emerald-300" />
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Right (OUT) */}
-                <div className="absolute right-0 top-0 bottom-0 w-3">
-                  {right.map((p, idx) => {
-                    const y = ((idx + 1) * h) / (right.length + 1);
-                    const pr = { deviceId: d.id, portName: p.name, dir: "OUT" as const, x: (d.x ?? 0) + w, y: (d.y ?? 0) + y };
-                    return (
-                      <div
-                        key={p.name}
-                        className="absolute -right-[6px]"
-                        style={{ top: y - 4 }}
-                        title={`${p.name} (${p.type})`}
-                        onMouseDown={(e) => {
-                          if (mode !== "connect") return;
-                          e.stopPropagation();
-                          setLinkFrom(pr);
-                        }}
-                        onMouseUp={(e) => {
-                          if (mode !== "connect") return;
-                          e.stopPropagation();
-                          if (linkFrom) {
-                            tryFinishLink(pr);
-                            setLinkFrom(null);
-                          }
-                        }}
-                      >
-                        <div className="w-2 h-2 rounded-full bg-sky-400 border border-sky-300" />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
             );
           })}
-        </div>
+          {linkFrom && (() => {
+            const fromDev = deviceMap.get(linkFrom.deviceId)!;
+            const P = portWorldPos(fromDev, linkFrom.portName, linkFrom.dir);
+            return (
+              <line
+                x1={P.x}
+                y1={P.y}
+                x2={mouseWorld.x}
+                y2={mouseWorld.y}
+                stroke="rgba(251,191,36,0.95)"
+                strokeDasharray="6 4"
+                strokeWidth={2}
+              />
+            );
+          })()}
+        </svg>
+
+        {/* devices */}
+        {devices.map((d) => {
+          const isSel = !!selectedIds?.has(d.id);
+          const w = d.w ?? BOX_W;
+          const h = d.h ?? BOX_H;
+          const left = (d.ports ?? []).filter((p) => p.direction === "IN");
+          const right = (d.ports ?? []).filter((p) => p.direction === "OUT");
+
+          return (
+            <div
+              key={d.id}
+              className={`absolute rounded-xl bg-slate-800/85 border transition-all
+                ${isSel ? "border-blue-400 ring-2 ring-blue-400/40" : "border-slate-600"} select-none`}
+              style={{ left: d.x, top: d.y, width: w, height: h }}
+              onMouseDown={(e) => {
+                if (mode !== "select" || e.button !== 0) return;
+                e.stopPropagation();
+                const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+                const isAlready = !!selectedIds?.has(d.id);
+
+                // selection rules to avoid "hidden extra move" bug:
+                // - if clicked is selected and not additive -> drag currently selected set
+                // - if clicked is not selected and not additive -> select ONLY clicked and drag it
+                // - if additive -> toggle selection; drag ONLY clicked
+                if (additive) {
+                  onToggleSelect?.(d.id, true);
+                } else if (!isAlready) {
+                  onToggleSelect?.(d.id, false);
+                }
+
+                const idsToDrag =
+                  !additive && isAlready ? Array.from(selectedIds ?? new Set([d.id])) : [d.id];
+
+                const orig: Record<string, { x: number; y: number }> = {};
+                idsToDrag.forEach((id) => {
+                  const dev = deviceMap.get(id)!;
+                  orig[id] = { x: dev.x, y: dev.y };
+                });
+                setDrag({ ids: idsToDrag, startX: e.clientX, startY: e.clientY, orig });
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                onToggleSelect?.(d.id, false);
+              }}
+              onMouseUp={() => setLinkFrom(null)}
+            >
+              {/* header */}
+              <div className="px-3 pt-2 text-sm font-semibold text-slate-100 truncate">{d.id}</div>
+              <div className="px-3 text-[11px] text-slate-400">{d.type ?? "device"}</div>
+
+              {/* IN ports (left) */}
+              <div className="absolute left-0 top-0 bottom-0 w-3">
+                {left.map((p, idx) => {
+                  const y = ((idx + 1) * h) / (left.length + 1);
+                  return (
+                    <div
+                      key={p.name}
+                      className="absolute -left-[6px]"
+                      style={{ top: y - 4 }}
+                      title={`${p.name} (${p.type})`}
+                      onMouseDown={(e) => {
+                        if (mode !== "connect") return;
+                        e.stopPropagation();
+                        setLinkFrom({ deviceId: d.id, portName: p.name, dir: "IN" });
+                      }}
+                      onMouseUp={(e) => {
+                        if (mode !== "connect") return;
+                        e.stopPropagation();
+                        if (linkFrom) tryFinishLink({ deviceId: d.id, portName: p.name, dir: "IN" });
+                      }}
+                    >
+                      <div className="w-2 h-2 rounded-full bg-emerald-400 border border-emerald-300" />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* OUT ports (right) */}
+              <div className="absolute right-0 top-0 bottom-0 w-3">
+                {right.map((p, idx) => {
+                  const y = ((idx + 1) * h) / (right.length + 1);
+                  return (
+                    <div
+                      key={p.name}
+                      className="absolute -right-[6px]"
+                      style={{ top: y - 4 }}
+                      title={`${p.name} (${p.type})`}
+                      onMouseDown={(e) => {
+                        if (mode !== "connect") return;
+                        e.stopPropagation();
+                        setLinkFrom({ deviceId: d.id, portName: p.name, dir: "OUT" });
+                      }}
+                      onMouseUp={(e) => {
+                        if (mode !== "connect") return;
+                        e.stopPropagation();
+                        if (linkFrom) tryFinishLink({ deviceId: d.id, portName: p.name, dir: "OUT" });
+                      }}
+                    >
+                      <div className="w-2 h-2 rounded-full bg-sky-400 border border-sky-300" />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* hint */}
       <div className="absolute bottom-2 left-3 text-[11px] text-slate-400 bg-black/30 px-2 py-1 rounded">
-        Mouse: Select / Drag • Right-drag or Pan tool: Pan • Wheel: Zoom • Connect tool: drag OUT→IN
+        Mouse: Select/Move • Pan: Right-drag / Pan tool • Wheel: Zoom • Connect: drag OUT → IN
       </div>
     </div>
   );
