@@ -18,7 +18,9 @@ export interface Device {
   w: number;
   h: number;
   color?: string;
-  customName?: string;   // user label
+  customName?: string;   // optional label (NOT shown in header now)
+  manufacturer?: string;
+  model?: string;
   ports: Port[];
 }
 
@@ -38,39 +40,7 @@ export interface GraphState {
   connections: Connection[];
 }
 
-export interface AddDevicePayload {
-  type: string;
-  count?: number;
-  x?: number;
-  y?: number;
-  w?: number;
-  h?: number;
-  color?: string;
-  customNameBase?: string; // prefix for custom names like "Camera"
-  defaultPorts?: Port[];   // optional starter ports
-}
-
-export interface AddPortsPayload {
-  deviceName: string; // matches device id or customName (case-insensitive)
-  ports: Array<{ portType: PortType; direction: PortDirection; quantity: number }>;
-}
-
-export interface CreateConnectionPayload {
-  sourceDevice: string;    // id or customName
-  destDevice: string;      // id or customName
-  sourcePortName?: string; // optional, auto-pick if missing
-  destPortName?: string;   // optional, auto-pick if missing
-}
-
-export interface EditConnectionIdsPayload {
-  match: string;   // regex string or substring to find
-  replace: string; // replacement
-}
-
-// ---------- ID helpers ----------
-let deviceCounter = 0;
-let connectionCounter = 0;
-
+// ---------- Prefix mapping ----------
 const TYPE_PREFIX: Record<string, string> = {
   camera: "CAM",
   ccu: "CCU",
@@ -85,19 +55,39 @@ const TYPE_PREFIX: Record<string, string> = {
   patch_panels: "PATCH",
 };
 
-export function nextDeviceId(type: string) {
-  deviceCounter += 1;
+// ---------- ID helpers (state-aware) ----------
+export function nextDeviceIdForType(state: GraphState, type: string) {
   const prefix = TYPE_PREFIX[type?.toLowerCase()] || "DEV";
-  return `${prefix}.${String(deviceCounter).padStart(2, "0")}`;
+  // find max numeric suffix for this prefix
+  let maxNum = 0;
+  const rx = new RegExp(`^${prefix}\\.(\\d+)$`, "i");
+  for (const d of state.devices) {
+    const m = d.id.match(rx);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
+    }
+  }
+  const next = maxNum + 1;
+  return `${prefix}.${String(next).padStart(2, "0")}`;
 }
 
-export function nextConnectionId() {
-  connectionCounter += 1;
-  return `CONN-${String(connectionCounter).padStart(4, "0")}`;
+export function nextConnectionIdFor(state: GraphState) {
+  let maxNum = 0;
+  const rx = /^CONN-(\d+)$/i;
+  for (const c of state.connections) {
+    const m = c.id.match(rx);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
+    }
+  }
+  const next = maxNum + 1;
+  return `CONN-${String(next).padStart(4, "0")}`;
 }
 
 // ---------- Finders ----------
-export function findDeviceByName(devices: Device[], name: string) {
+export function findDeviceByIdOrName(devices: Device[], name: string) {
   const n = name.toLowerCase().trim();
   return devices.find(
     (d) =>
@@ -111,7 +101,8 @@ export function getAvailablePort(
   direction: PortDirection,
   preferType?: PortType
 ) {
-  const ports = device.ports.filter((p) => p.direction === direction);
+  const ports = (device.ports ?? []).filter((p) => p.direction === direction);
+  if (!ports.length) return undefined;
   if (preferType) {
     const typed = ports.find((p) => p.type.toUpperCase() === preferType.toUpperCase());
     if (typed) return typed;
@@ -119,10 +110,22 @@ export function getAvailablePort(
   return ports[0];
 }
 
-// ---------- Mutators (pure-ish; return new copies) ----------
+// ---------- Mutators (pure; return new copies) ----------
 export function addDevice(
   state: GraphState,
-  payload: AddDevicePayload
+  payload: {
+    type: string;
+    count?: number;
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+    color?: string;
+    customNameBase?: string;
+    defaultPorts?: Port[];
+    manufacturer?: string;
+    model?: string;
+  }
 ): GraphState {
   const {
     type,
@@ -134,16 +137,17 @@ export function addDevice(
     color = "#334155",
     customNameBase,
     defaultPorts = [],
+    manufacturer,
+    model,
   } = payload;
 
-  let { devices } = state;
   const newDevices: Device[] = [];
+  let draft = { ...state };
 
   for (let i = 0; i < count; i++) {
-    const id = nextDeviceId(type);
-    const customName =
-      customNameBase ? `${customNameBase} ${i + 1}` : undefined;
-    newDevices.push({
+    const id = nextDeviceIdForType(draft, type);
+    const customName = customNameBase ? `${customNameBase} ${i + 1}` : undefined;
+    const d: Device = {
       id,
       type,
       x: x + i * 40,
@@ -152,40 +156,45 @@ export function addDevice(
       h,
       color,
       customName,
+      manufacturer,
+      model,
       ports: [...defaultPorts],
-    });
+    };
+    draft = { ...draft, devices: [...draft.devices, d] };
+    newDevices.push(d);
   }
-
-  return { ...state, devices: [...devices, ...newDevices] };
+  return draft;
 }
 
 export function addPortsToDevice(
   state: GraphState,
-  payload: AddPortsPayload
+  payload: {
+    deviceName: string; // id or customName
+    ports: Array<{ portType: PortType; direction: PortDirection; quantity: number }>;
+  }
 ): GraphState {
   const { deviceName, ports } = payload;
-  const device = findDeviceByName(state.devices, deviceName);
+  const device = findDeviceByIdOrName(state.devices, deviceName);
   if (!device) throw new Error(`Device "${deviceName}" not found.`);
 
-  const updated = { ...device, ports: [...device.ports] };
+  const updated = { ...device, ports: [...(device.ports ?? [])] };
 
   ports.forEach((p) => {
     const { portType, direction, quantity } = p;
     for (let i = 0; i < quantity; i++) {
-      // find a unique name
+      // find unique name
       let counter = updated.ports.length + 1;
       let candidate = "";
       const existing = new Set(updated.ports.map((pp) => pp.name));
       do {
         candidate = `${String(portType).toUpperCase()}_${direction
-          .slice(0, 3)
           .toUpperCase()}_${counter++}`;
       } while (existing.has(candidate));
 
       updated.ports.push({
         name: candidate,
         type: portType.toUpperCase(),
-        direction: direction.toUpperCase() as PortDirection,
+        direction,
       });
     }
   });
@@ -198,58 +207,45 @@ export function addPortsToDevice(
 
 export function createConnection(
   state: GraphState,
-  payload: CreateConnectionPayload
+  payload: {
+    sourceDevice: string;    // id or name
+    destDevice: string;      // id or name
+    sourcePortName?: string; // if omitted, auto-pick OUT
+    destPortName?: string;   // if omitted, auto-pick IN
+  }
 ): GraphState {
   const { sourceDevice, destDevice, sourcePortName, destPortName } = payload;
 
-  const src = findDeviceByName(state.devices, sourceDevice);
-  const dst = findDeviceByName(state.devices, destDevice);
+  const src = findDeviceByIdOrName(state.devices, sourceDevice);
+  const dst = findDeviceByIdOrName(state.devices, destDevice);
   if (!src) throw new Error(`Source device "${sourceDevice}" not found.`);
   if (!dst) throw new Error(`Destination device "${destDevice}" not found.`);
 
   const srcPort =
-    sourcePortName ||
-    getAvailablePort(src, "OUT" as PortDirection)?.name ||
-    "";
+    sourcePortName || getAvailablePort(src, "OUT" as PortDirection)?.name || "";
   const dstPort =
-    destPortName ||
-    getAvailablePort(dst, "IN" as PortDirection)?.name ||
-    "";
+    destPortName || getAvailablePort(dst, "IN" as PortDirection)?.name || "";
 
   if (!srcPort || !dstPort)
     throw new Error("No suitable ports found to connect.");
 
-  const connection: Connection = {
-    id: nextConnectionId(),
+  const conn: Connection = {
+    id: nextConnectionIdFor(state),
     from: { deviceId: src.id, portName: srcPort },
     to: { deviceId: dst.id, portName: dstPort },
   };
 
-  return { ...state, connections: [...state.connections, connection] };
+  return { ...state, connections: [...state.connections, conn] };
 }
 
-export function editConnectionIds(
-  state: GraphState,
-  payload: EditConnectionIdsPayload
-): GraphState {
-  const { match, replace } = payload;
-  const rx = new RegExp(match, "g");
-  return {
-    ...state,
-    connections: state.connections.map((c) => ({
-      ...c,
-      id: c.id.replace(rx, replace),
-    })),
-  };
-}
-
-// ---------- Selection / Clipboard ----------
 export function deleteSelectedDevices(
   state: GraphState,
   selectedIds: Set<string>
 ): GraphState {
   const devices = state.devices.filter((d) => !selectedIds.has(d.id));
-  const removedIds = new Set(state.devices.map((d) => d.id).filter((id) => !devices.find((d) => d.id === id)));
+  const removedIds = new Set(
+    state.devices.map((d) => d.id).filter((id) => !devices.find((d2) => d2.id === id))
+  );
   const connections = state.connections.filter(
     (c) => !removedIds.has(c.from.deviceId) && !removedIds.has(c.to.deviceId)
   );
@@ -260,7 +256,9 @@ export function copySelectedDevices(
   state: GraphState,
   selectedIds: Set<string>
 ): Device[] {
-  return state.devices.filter((d) => selectedIds.has(d.id)).map((d) => ({ ...d, ports: [...d.ports] }));
+  return state.devices
+    .filter((d) => selectedIds.has(d.id))
+    .map((d) => ({ ...d, ports: [...(d.ports ?? [])] }));
 }
 
 export function pasteDevices(
@@ -268,17 +266,22 @@ export function pasteDevices(
   clipboard: Device[],
   offset = { x: 40, y: 40 }
 ): GraphState {
-  const clones: Device[] = clipboard.map((d, i) => ({
-    ...d,
-    id: nextDeviceId(d.type),
-    x: d.x + offset.x * (i + 1),
-    y: d.y + offset.y * (i + 1),
-    ports: [...d.ports],
-  }));
-  return { ...state, devices: [...state.devices, ...clones] };
+  let draft = { ...state };
+  clipboard.forEach((d, i) => {
+    const newId = nextDeviceIdForType(draft, d.type);
+    const clone: Device = {
+      ...d,
+      id: newId,
+      x: (d.x ?? 0) + offset.x * (i + 1),
+      y: (d.y ?? 0) + offset.y * (i + 1),
+      ports: [...(d.ports ?? [])],
+    };
+    draft = { ...draft, devices: [...draft.devices, clone] };
+  });
+  return draft;
 }
 
-// ---------- Save / Load ----------
+// ---------- Save / Load helpers ----------
 export function serialize(state: GraphState) {
   return JSON.stringify(state, null, 2);
 }
@@ -297,25 +300,4 @@ export function downloadJson(filename: string, jsonText: string) {
 
 export function saveProject(state: GraphState, filename = "project.json") {
   downloadJson(filename, serialize(state));
-}
-
-export async function loadProjectFromFile(
-  file: File
-): Promise<GraphState> {
-  const text = await file.text();
-  const parsed = JSON.parse(text);
-  // very light validation
-  if (!parsed.devices || !parsed.connections) {
-    throw new Error("Invalid project file.");
-  }
-  return parsed as GraphState;
-}
-
-// ---------- Small utilities ----------
-export function toggleGrid(current: boolean) {
-  return !current;
-}
-
-export function clampZoom(z: number, min = 0.25, max = 3) {
-  return Math.max(min, Math.min(max, z));
 }
