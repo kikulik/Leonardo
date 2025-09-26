@@ -1,14 +1,20 @@
+version: "3.9"
+
 services:
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        BUILD_ID: ${BUILD_ID}
+    image: myorg/leonardo-backend:${BUILD_ID}
     container_name: leonardo-backend
     ports:
-      - "10001:10001"        # host:container
+      - "10001:10001"
     restart: unless-stopped
     environment:
-      - PYTHONUNBUFFERED=1
+      PYTHONUNBUFFERED: "1"
+      BUILD_ID: ${BUILD_ID}
 
   frontend:
     build:
@@ -16,10 +22,12 @@ services:
       dockerfile: Dockerfile
       args:
         BUILD_ID: ${BUILD_ID}
+    image: myorg/leonardo-frontend:${BUILD_ID}
     container_name: leonardo-frontend
     depends_on:
       - backend
     ports:
       - "10201:80"
     restart: unless-stopped
-
+    environment:
+      BUILD_ID: ${BUILD_ID}
