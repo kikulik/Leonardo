@@ -68,9 +68,7 @@ const TYPE_PREFIX: Record<string, string> = {
 };
 
 function uid(prefix = "p") {
-  return `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now()
-    .toString(36)
-    .slice(-4)}`;
+  return `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now().toString(36).slice(-4)}`;
 }
 
 export function nextDeviceIdForType(state: GraphState, type: string) {
@@ -162,26 +160,24 @@ export function addDevice(
   const OUTs = normPorts.filter(p => p.direction === "OUT");
   const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // --- Updated sizing logic to match Canvas calculations ---
+  // ---- auto sizing that matches Canvas logic (header excluded from pin math) ----
   const HEADER_H = 36;
   const BODY_PAD_TOP = 15;
   const BODY_PAD_BOTTOM = 15;
-  
-  // Improved height calculation: ensure adequate spacing between ports
-  const minPortSpacing = 24; // minimum space between ports
-  const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
-  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
 
-  // Width calculation: ensure text fits properly
-  const CHAR_W = Math.ceil(10 * 0.6); // approximate character width for PORT_FONT=10
+  const minPortSpacing = 24;
+  const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
+  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight); // :contentReference[oaicite:2]{index=2}
+
+  const CHAR_W = Math.ceil(10 * 0.6); // PORT_FONT=10
   const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const MIDDLE_GAP = 24;
   const PIN_INSET = 7;
-  const PIN_AND_TEXT = 2 * (PIN_INSET + 9); // space for pin circles and text spacing
-  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
-  
-  let draft = { ...state };
+  const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
+  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP); // :contentReference[oaicite:3]{index=3}
+
+  let draft: GraphState = withPortIds({ ...state });
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
     draft = {
@@ -207,25 +203,15 @@ export function addDevice(
   return draft;
 }
 
-export function deleteSelectedDevices(
-  state: GraphState,
-  selectedIds: Set<string>
-): GraphState {
-  const keep = new Set(
-    state.devices.filter((d) => !selectedIds.has(d.id)).map((d) => d.id)
-  );
+export function deleteSelectedDevices(state: GraphState, selectedIds: Set<string>): GraphState {
+  const keep = new Set(state.devices.filter((d) => !selectedIds.has(d.id)).map((d) => d.id));
   return {
     devices: state.devices.filter((d) => keep.has(d.id)),
-    connections: state.connections.filter(
-      (c) => keep.has(c.from.deviceId) && keep.has(c.to.deviceId)
-    ),
+    connections: state.connections.filter((c) => keep.has(c.from.deviceId) && keep.has(c.to.deviceId)),
   };
 }
 
-export function copySelectedDevices(
-  state: GraphState,
-  selectedIds: Set<string>
-) {
+export function copySelectedDevices(state: GraphState, selectedIds: Set<string>) {
   return state.devices
     .filter((d) => selectedIds.has(d.id))
     .map((d) => ({ ...d, ports: d.ports.map((p) => ({ ...p })) }));
@@ -256,13 +242,8 @@ export function pasteDevices(
   return draft;
 }
 
-// OUT may connect to only one IN; each IN accepts only one.
-// No device-to-device; it's strictly pin-to-pin.
-export function addConnection(
-  state: GraphState,
-  from: ConnectionEnd,
-  to: ConnectionEnd
-): GraphState {
+// OUT may connect to only one IN; each IN accepts only one; strictly pin→pin.
+export function addConnection(state: GraphState, from: ConnectionEnd, to: ConnectionEnd): GraphState {
   const fromDev = state.devices.find((d) => d.id === from.deviceId);
   const toDev = state.devices.find((d) => d.id === to.deviceId);
   if (!fromDev || !toDev) return state;
@@ -284,8 +265,7 @@ export function addConnection(
 
   // forbid fan-out: OUT already used
   const outUsed = state.connections.some(
-    (c) =>
-      c.from.deviceId === from.deviceId && c.from.portName === from.portName
+    (c) => c.from.deviceId === from.deviceId && c.from.portName === from.portName
   );
   if (outUsed) return state;
 
