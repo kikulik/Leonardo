@@ -1,3 +1,4 @@
+// frontend/src/components/AddEquipmentModal.tsx
 import React, { useState } from "react";
 
 type Props = {
@@ -9,9 +10,9 @@ type Props = {
     customNameBase?: string;
     manufacturer?: string;
     model?: string;
-    color?: string;
     w?: number;
     h?: number;
+    color?: string; // NEW
     inPorts?: { type: string; quantity: number };
     outPorts?: { type: string; quantity: number };
   }) => void;
@@ -23,9 +24,9 @@ export default function AddEquipmentModal({ open, onClose, onSubmit }: Props) {
   const [customNameBase, setCustomNameBase] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [model, setModel] = useState("");
-  const [color, setColor] = useState("#1f2937");
   const [w, setW] = useState(160);
   const [h, setH] = useState(80);
+  const [color, setColor] = useState("#334155"); // NEW
   const [inType, setInType] = useState("SDI");
   const [inQty, setInQty] = useState(0);
   const [outType, setOutType] = useState("SDI");
@@ -60,67 +61,69 @@ export default function AddEquipmentModal({ open, onClose, onSubmit }: Props) {
               className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
           </div>
           <div>
-            <label className="text-xs text-slate-300">Color</label>
-            <input type="color" value={color} onChange={(e) => setColor(e.target.value)}
-              className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 h-[34px] p-1" />
-          </div>
-
-          <div>
             <label className="text-xs text-slate-300">Manufacturer</label>
             <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)}
               className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
           </div>
+
           <div>
             <label className="text-xs text-slate-300">Model</label>
             <input value={model} onChange={(e) => setModel(e.target.value)}
               className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
           </div>
 
-          <div>
-            <label className="text-xs text-slate-300">Width</label>
-            <input type="number" min={40} value={w}
-              onChange={(e) => setW(parseInt(e.target.value || "160", 10))}
-              className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
-          </div>
-          <div>
-            <label className="text-xs text-slate-300">Height</label>
-            <input type="number" min={20} value={h}
-              onChange={(e) => setH(parseInt(e.target.value || "80", 10))}
-              className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-slate-300">Width</label>
+              <input type="number" min={80} value={w}
+                onChange={(e) => setW(parseInt(e.target.value || "160"))}
+                className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-300">Height</label>
+              <input type="number" min={60} value={h}
+                onChange={(e) => setH(parseInt(e.target.value || "80"))}
+                className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
+            </div>
           </div>
 
-          <div className="rounded-xl border border-slate-700 p-3 col-span-2">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-xl border border-slate-700 p-3">
-                <div className="font-medium mb-2">IN Ports (left)</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-slate-300">Type</label>
-                    <input value={inType} onChange={(e) => setInType(e.target.value)}
-                      className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-300">Qty</label>
-                    <input type="number" min={0} value={inQty}
-                      onChange={(e) => setInQty(parseInt(e.target.value || "0"))}
-                      className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
-                  </div>
+          <div>
+            <label className="text-xs text-slate-300">Color</label>
+            <input type="color" value={color}
+              onChange={(e) => setColor(e.target.value)}
+              className="w-12 h-8 mt-1 bg-slate-800 border border-slate-700 rounded p-0" />
+          </div>
+
+          <div className="col-span-2 grid grid-cols-2 gap-4 mt-2">
+            <div className="rounded-xl border border-slate-700 p-3">
+              <div className="font-medium mb-2">IN Ports (left)</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-slate-300">Type</label>
+                  <input value={inType} onChange={(e) => setInType(e.target.value)}
+                    className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-300">Qty</label>
+                  <input type="number" min={0} value={inQty}
+                    onChange={(e) => setInQty(parseInt(e.target.value || "0"))}
+                    className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
                 </div>
               </div>
-              <div className="rounded-xl border border-slate-700 p-3">
-                <div className="font-medium mb-2">OUT Ports (right)</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-slate-300">Type</label>
-                    <input value={outType} onChange={(e) => setOutType(e.target.value)}
-                      className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-300">Qty</label>
-                    <input type="number" min={0} value={outQty}
-                      onChange={(e) => setOutQty(parseInt(e.target.value || "0"))}
-                      className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
-                  </div>
+            </div>
+            <div className="rounded-xl border border-slate-700 p-3">
+              <div className="font-medium mb-2">OUT Ports (right)</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-slate-300">Type</label>
+                  <input value={outType} onChange={(e) => setOutType(e.target.value)}
+                    className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-300">Qty</label>
+                  <input type="number" min={0} value={outQty}
+                    onChange={(e) => setOutQty(parseInt(e.target.value || "0"))}
+                    className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" />
                 </div>
               </div>
             </div>
@@ -128,7 +131,9 @@ export default function AddEquipmentModal({ open, onClose, onSubmit }: Props) {
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600">Cancel</button>
+          <button onClick={onClose} className="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600">
+            Cancel
+          </button>
           <button
             onClick={() =>
               onSubmit({
@@ -137,9 +142,9 @@ export default function AddEquipmentModal({ open, onClose, onSubmit }: Props) {
                 customNameBase,
                 manufacturer,
                 model,
-                color,
                 w,
                 h,
+                color, // NEW
                 inPorts: { type: inType, quantity: inQty },
                 outPorts: { type: outType, quantity: outQty },
               })
