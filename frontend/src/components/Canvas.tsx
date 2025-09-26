@@ -25,23 +25,23 @@ type Props = {
 const BOX_W = 160;
 const BOX_H = 80;
 
-// FIXED header height (visual). All math below assumes this exact value.
+// FIXED header height (visual only). All pin math starts AFTER this.
 const HEADER_H = 36;
 
 // Pin geometry
 const PIN_INSET = 7;
 const PORT_FONT = 10;
 
-// BODY padding above first and below last pin (what you asked for).
+// Body padding (above first / below last pin)
 const BODY_PAD_TOP = 15;
 const BODY_PAD_BOTTOM = 15;
 
-// ===== Single source of truth for pin positions =====
-
-// Y inside the device (local SVG coords) for pin #idx (0..count-1)
-// This now properly accounts for the SVG coordinate system
+/**
+ * Pin Y inside the device (local SVG coords) for pin #idx (0..count-1)
+ * All math starts AFTER the header. Header is never included in spacing.
+ */
 function pinYLocal(boxH: number, count: number, idx: number): number {
-  // Body area (below header) - this is where pins can be placed
+  // Area reserved for the body (below header)
   const bodyTop = HEADER_H;
   const bodyH = Math.max(0, boxH - HEADER_H);
 
@@ -52,12 +52,14 @@ function pinYLocal(boxH: number, count: number, idx: number): number {
   if (count <= 0) return innerTop + innerH / 2;
   if (count === 1) return innerTop + innerH / 2;
 
-  // Even spacing: distribute pins evenly within the inner area
+  // Even spacing within body inner area
   const step = innerH / (count - 1);
   return innerTop + step * idx;
 }
 
-// World position for a given port - now uses consistent coordinate system
+/**
+ * World position for a given port — uses the same local Y math (header excluded).
+ */
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const w = device.w ?? BOX_W;
   const h = device.h ?? BOX_H;
@@ -67,38 +69,47 @@ function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   if (dir === "IN") {
     const idx = INs.findIndex((p) => p.name === portName);
     if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
-    return { 
-      x: (device.x ?? 0) + PIN_INSET, 
-      y: (device.y ?? 0) + pinYLocal(h, INs.length, idx) 
+    return {
+      x: (device.x ?? 0) + PIN_INSET,
+      y: (device.y ?? 0) + pinYLocal(h, INs.length, idx),
     };
   } else {
     const idx = OUTs.findIndex((p) => p.name === portName);
     if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
-    return { 
-      x: (device.x ?? 0) + w - PIN_INSET, 
-      y: (device.y ?? 0) + pinYLocal(h, OUTs.length, idx) 
+    return {
+      x: (device.x ?? 0) + w - PIN_INSET,
+      y: (device.y ?? 0) + pinYLocal(h, OUTs.length, idx),
     };
   }
 }
 
-// Minimum body height/width so labels don't overlap when resizing
+/**
+ * Minimum size so ports + labels have room. Header height is excluded from
+ * pin spacing (we add it on top of inner pin area only).
+ */
 function minSizeForDevice(d: Device) {
-  const INs = (d.ports ?? []).filter(p => p.direction === "IN");
-  const OUTs = (d.ports ?? []).filter(p => p.direction === "OUT");
+  const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
+  const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
   const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // Height calculation: need space for all ports plus padding
-  const minPortSpacing = 24; // minimum space between ports
+  // Height: enough inner space for all pins, plus header and padding
+  const minPortSpacing = 24;
   const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
-  const minH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
+  const minH = Math.max(
+    80,
+    HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight
+  );
 
-  // Width: text width on both sides + pins + middle gap
+  // Width: rough text width on both sides + pins + middle gap
   const CHAR_W = Math.ceil(PORT_FONT * 0.6);
   const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const MIDDLE_GAP = 24;
   const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
-  const minW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
+  const minW = Math.max(
+    160,
+    PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
+  );
 
   return { minW, minH };
 }
@@ -118,11 +129,14 @@ export function Canvas({
   gridSize = 16,
 }: Props) {
   const devices = graph.devices;
-  const deviceMap = useMemo(() => new Map(devices.map((d) => [d.id, d] as const)), [devices]);
+  const deviceMap = useMemo(
+    () => new Map(devices.map((d) => [d.id, d] as const)),
+    [devices]
+  );
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // Grid (normalized modulus so it works for negative pan too)
+  // Grid (normalized so negative pans still look right)
   const gridCell = Math.max(8, Math.round(24 * zoom));
   const gridPosX = ((pan.x % gridCell) + gridCell) % gridCell;
   const gridPosY = ((pan.y % gridCell) + gridCell) % gridCell;
@@ -148,7 +162,12 @@ export function Canvas({
           devices: graph.devices.map((d) => {
             if (!drag.ids.includes(d.id)) return d;
             const start = drag.orig[d.id];
-            return moveDevice({ ...d, x: start.x, y: start.y }, dx, dy, { snapToGrid: snapEnabled, gridSize });
+            return moveDevice(
+              { ...d, x: start.x, y: start.y },
+              dx,
+              dy,
+              { snapToGrid: snapEnabled, gridSize }
+            );
           }),
         };
         onChange(next);
@@ -170,7 +189,14 @@ export function Canvas({
   }, [drag, graph, onChange, zoom, snapEnabled, gridSize]);
 
   // Resize
-  const [resizing, setResizing] = useState<null | { id: string; sx: number; sy: number; w: number; h: number; raf?: number }>(null);
+  const [resizing, setResizing] = useState<null | {
+    id: string;
+    sx: number;
+    sy: number;
+    w: number;
+    h: number;
+    raf?: number;
+  }>(null);
 
   useEffect(() => {
     function onMove(e: MouseEvent) {
@@ -178,7 +204,7 @@ export function Canvas({
       const dx = (e.clientX - resizing.sx) / zoom;
       const dy = (e.clientY - resizing.sy) / zoom;
 
-      const dev = graph.devices.find(d => d.id === resizing.id);
+      const dev = graph.devices.find((d) => d.id === resizing.id);
       if (!dev) return;
       const { minW, minH } = minSizeForDevice(dev);
 
@@ -189,10 +215,12 @@ export function Canvas({
       const raf = requestAnimationFrame(() => {
         onChange({
           ...graph,
-          devices: graph.devices.map(d => d.id === resizing.id ? { ...d, w: nw, h: nh } : d),
+          devices: graph.devices.map((d) =>
+            d.id === resizing.id ? { ...d, w: nw, h: nh } : d
+          ),
         });
       });
-      setResizing(r => (r ? { ...r, raf } : r));
+      setResizing((r) => (r ? { ...r, raf } : r));
     }
     function onUp() {
       if (resizing?.raf) cancelAnimationFrame(resizing.raf);
@@ -209,7 +237,12 @@ export function Canvas({
   }, [resizing, graph, onChange, zoom]);
 
   // Pan / zoom
-  const [panning, setPanning] = useState<null | { sx: number; sy: number; px: number; py: number }>(null);
+  const [panning, setPanning] = useState<null | {
+    sx: number;
+    sy: number;
+    px: number;
+    py: number;
+  }>(null);
   const onWheel: React.WheelEventHandler = (e) => {
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     const next = clampZoom(zoom * factor);
@@ -217,8 +250,12 @@ export function Canvas({
   };
 
   // Connect (OUT → IN)
-  const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
-  const [cursorWorld, setCursorWorld] = useState<null | { x: number; y: number }>(null);
+  const [pending, setPending] = useState<null | {
+    from: { deviceId: string; portName: string };
+  }>(null);
+  const [cursorWorld, setCursorWorld] = useState<null | { x: number; y: number }>(
+    null
+  );
 
   function handlePortClick(d: Device, p: Port) {
     if (!pending) {
@@ -232,8 +269,8 @@ export function Canvas({
       return;
     }
 
-    const aDev = graph.devices.find(x => x.id === pending.from.deviceId)!;
-    const aPort = aDev.ports.find(pp => pp.name === pending.from.portName)!;
+    const aDev = graph.devices.find((x) => x.id === pending.from.deviceId)!;
+    const aPort = aDev.ports.find((pp) => pp.name === pending.from.portName)!;
     const bDev = d;
     const bPort = p;
 
@@ -256,12 +293,12 @@ export function Canvas({
     setCursorWorld(null);
   }
 
-  // Device-local pins — SVG spans the whole box
+  // Device-local pins — SVG spans the whole box; Y excludes header region
   function DevicePortsSVG({ d }: { d: Device }) {
     const w = d.w ?? BOX_W;
     const h = d.h ?? BOX_H;
-    const INs = (d.ports ?? []).filter(p => p.direction === "IN");
-    const OUTs = (d.ports ?? []).filter(p => p.direction === "OUT");
+    const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
+    const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
     const armed = pending?.from?.deviceId === d.id ? pending.from.portName : null;
 
     return (
@@ -271,12 +308,30 @@ export function Canvas({
           const cx = PIN_INSET;
           const selected = armed === p.name;
           return (
-            <g key={p.id} className="cursor-crosshair"
-               onMouseDown={(e) => e.stopPropagation()}
-               onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}>
-              <circle cx={cx} cy={cy} r={selected ? 6 : 5}
-                      fill="#10b981" stroke={selected ? "#34d399" : "white"} strokeWidth={selected ? 3 : 2}/>
-              <text x={cx + 9} y={cy + 0.5} fontSize={PORT_FONT} fill="#e2e8f0" dominantBaseline="middle">
+            <g
+              key={p.id}
+              className="cursor-crosshair"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePortClick(d, p);
+              }}
+            >
+              <circle
+                cx={cx}
+                cy={cy}
+                r={selected ? 6 : 5}
+                fill="#10b981"
+                stroke={selected ? "#34d399" : "white"}
+                strokeWidth={selected ? 3 : 2}
+              />
+              <text
+                x={cx + 9}
+                y={cy + 0.5}
+                fontSize={PORT_FONT}
+                fill="#e2e8f0"
+                dominantBaseline="middle"
+              >
                 {p.name}
               </text>
             </g>
@@ -287,13 +342,31 @@ export function Canvas({
           const cx = w - PIN_INSET;
           const selected = armed === p.name;
           return (
-            <g key={p.id} className="cursor-crosshair"
-               onMouseDown={(e) => e.stopPropagation()}
-               onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}>
-              <circle cx={cx} cy={cy} r={selected ? 6 : 5}
-                      fill="#38bdf8" stroke={selected ? "#60a5fa" : "white"} strokeWidth={selected ? 3 : 2}/>
-              <text x={cx - 9} y={cy + 0.5} fontSize={PORT_FONT} fill="#e2e8f0"
-                    dominantBaseline="middle" textAnchor="end">
+            <g
+              key={p.id}
+              className="cursor-crosshair"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePortClick(d, p);
+              }}
+            >
+              <circle
+                cx={cx}
+                cy={cy}
+                r={selected ? 6 : 5}
+                fill="#38bdf8"
+                stroke={selected ? "#60a5fa" : "white"}
+                strokeWidth={selected ? 3 : 2}
+              />
+              <text
+                x={cx - 9}
+                y={cy + 0.5}
+                fontSize={PORT_FONT}
+                fill="#e2e8f0"
+                dominantBaseline="middle"
+                textAnchor="end"
+              >
                 {p.name}
               </text>
             </g>
@@ -317,7 +390,7 @@ export function Canvas({
         />
       )}
 
-      {/* World wrapper. IMPORTANT: translate uses pan*zoom so the inverse is (/zoom - pan). */}
+      {/* World wrapper */}
       <div
         ref={wrapRef}
         className="absolute inset-0"
@@ -347,7 +420,7 @@ export function Canvas({
           transformOrigin: "0 0",
         }}
       >
-        {/* Connection overlay — same geometry as DevicePortsSVG */}
+        {/* Connection overlay — uses same portWorldPos (header excluded) */}
         <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
           {graph.connections.map((c) => {
             const Adev = deviceMap.get(c.from.deviceId);
@@ -357,19 +430,41 @@ export function Canvas({
             const B = portWorldPos(Bdev, c.to.portName, "IN");
             const midX = (A.x + B.x) / 2;
             const d = `M ${A.x},${A.y} C ${midX},${A.y} ${midX},${B.y} ${B.x},${B.y}`;
-            return <path key={c.id} d={d} fill="none" stroke="rgba(56,189,248,0.95)" strokeWidth={2} />;
+            return (
+              <path
+                key={c.id}
+                d={d}
+                fill="none"
+                stroke="rgba(56,189,248,0.95)"
+                strokeWidth={2}
+              />
+            );
           })}
 
           {pending && cursorWorld && (() => {
             const dev = deviceMap.get(pending.from.deviceId);
             if (!dev) return null;
-            const firstPort = dev.ports.find(pp => pp.name === pending.from.portName);
+            const firstPort = dev.ports.find(
+              (pp) => pp.name === pending.from.portName
+            );
             if (!firstPort) return null;
-            const A = portWorldPos(dev, pending.from.portName, firstPort.direction as "IN" | "OUT");
+            const A = portWorldPos(
+              dev,
+              pending.from.portName,
+              firstPort.direction as "IN" | "OUT"
+            );
             const B = cursorWorld;
             const midX = (A.x + B.x) / 2;
             const d = `M ${A.x},${A.y} C ${midX},${A.y} ${midX},${B.y} ${B.x},${B.y}`;
-            return <path d={d} fill="none" stroke="rgba(148,163,184,0.9)" strokeDasharray="6 6" strokeWidth={2} />;
+            return (
+              <path
+                d={d}
+                fill="none"
+                stroke="rgba(148,163,184,0.9)"
+                strokeDasharray="6 6"
+                strokeWidth={2}
+              />
+            );
           })()}
         </svg>
 
@@ -403,7 +498,8 @@ export function Canvas({
                     ? Array.from(new Set([...selectedIds, d.id]))
                     : [d.id];
 
-                if (!(e.shiftKey || e.metaKey || e.ctrlKey)) onToggleSelect(d.id, false);
+                if (!(e.shiftKey || e.metaKey || e.ctrlKey))
+                  onToggleSelect(d.id, false);
                 else onToggleSelect(d.id, true);
 
                 setDrag({
@@ -419,21 +515,25 @@ export function Canvas({
                 });
               }}
             >
-              {/* Visual header (fixed height) */}
+              {/* Visual header (fixed height; not part of any math) */}
               <div
                 className="box-border px-2 border-b border-white/10 flex flex-col justify-center"
                 style={{ background: "rgba(0,0,0,0.15)", height: HEADER_H }}
               >
                 <div className="text-[12px] flex items-center justify-between leading-none">
-                  <div className="font-medium truncate">{d.customName ?? d.id}</div>
+                  <div className="font-medium truncate">
+                    {d.customName ?? d.id}
+                  </div>
                   <div className="opacity-70 ml-2 truncate">{d.type}</div>
                 </div>
                 <div className="text-[10px] opacity-85 mt-1 truncate leading-none">
-                  {(d as any).manufacturer || ""}{((d as any).manufacturer && (d as any).model) ? " • " : ""}{(d as any).model || ""}
+                  {(d as any).manufacturer || ""}
+                  {((d as any).manufacturer && (d as any).model) ? " • " : ""}
+                  {(d as any).model || ""}
                 </div>
               </div>
 
-              {/* Ports (same coord system as overlay) */}
+              {/* Ports (header excluded in all Y calculations) */}
               <div className="relative w-full h-full">
                 <DevicePortsSVG d={d} />
               </div>
@@ -441,7 +541,16 @@ export function Canvas({
               {/* Resize handle */}
               <div
                 className="absolute w-3 h-3 right-0 bottom-0 translate-x-1 translate-y-1 rounded-sm border border-white/50 bg-white/60 cursor-nwse-resize"
-                onMouseDown={(e) => { e.stopPropagation(); setResizing({ id: d.id, sx: e.clientX, sy: e.clientY, w, h }); }}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  setResizing({
+                    id: d.id,
+                    sx: e.clientX,
+                    sy: e.clientY,
+                    w,
+                    h,
+                  });
+                }}
                 title="Resize"
               />
             </div>
@@ -451,11 +560,13 @@ export function Canvas({
 
       {/* Diagnostics */}
       <div className="absolute bottom-2 right-3 text-[11px] text-slate-200 bg-black/40 px-2 py-1 rounded border border-white/10">
-        {devices.length} devices • {graph.connections.length} connections {snapEnabled ? "• snap: ON" : "• snap: OFF"}
+        {devices.length} devices • {graph.connections.length} connections{" "}
+        {snapEnabled ? "• snap: ON" : "• snap: OFF"}
       </div>
 
       <div className="absolute bottom-2 left-3 text-[11px] text-slate-400 bg-black/30 px-2 py-1 rounded">
-        Select/Move: Drag • Pan: Right-drag / Pan tool • Wheel: Zoom • Connect: OUT → IN
+        Select/Move: Drag • Pan: Right-drag / Pan tool • Wheel: Zoom • Connect:
+        OUT → IN
       </div>
     </div>
   );
