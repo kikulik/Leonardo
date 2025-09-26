@@ -147,38 +147,47 @@ export function addDevice(
 ): GraphState {
   const {
     type, count = 1, x = 80, y = 80,
-    w = 160,                          // width may be overridden by caller
-    h,                                 // we'll compute a minimum height if not provided
+    w = 160,
+    h,
     color = "#334155",
     customNameBase, defaultPorts = [],
     manufacturer, model,
   } = payload;
 
-  // compute auto-height from number of ports (max of IN/OUT) + 2 buffer "rows"
   const normPorts = normalizePorts(defaultPorts);
   const inCnt  = normPorts.filter(p => p.direction === "IN").length;
   const outCnt = normPorts.filter(p => p.direction === "OUT").length;
   const rows   = Math.max(inCnt, outCnt);
-  const BUFFER_ROWS = 2;         // <-- your "2 ports higher" buffer
-  const PER_ROW = 24;            // vertical spacing per pin
-  const HEADER = 36;
-  const PADDING = 12;            // top/bottom padding in the ports area
-  const autoH = HEADER + PADDING * 2 + Math.max(0, rows + BUFFER_ROWS - 1) * PER_ROW;
 
-  let draft = { ...state };
+  // Height with explicit top/bottom pads so last pin is comfortably inside
+  const HEADER = 36;
+  const TOP_PAD = 10;
+  const BOT_PAD = 18;
+  const ROW_SP = 24;
+  const autoH = HEADER + TOP_PAD + BOT_PAD + (rows > 1 ? (rows - 1) * ROW_SP : ROW_SP);
+
+  // Width so left/right labels never overlap
+  const CHAR_W = Math.ceil(10 * 0.6); // PORT_FONT * 0.6
+  const leftLen  = normPorts.filter(p => p.direction === "IN").reduce((m,p) => Math.max(m, (p.name || "").length), 0);
+  const rightLen = normPorts.filter(p => p.direction === "OUT").reduce((m,p) => Math.max(m, (p.name || "").length), 0);
+  const MIDDLE_GAP = 24;
+  const PIN_AND_TEXT = 2 * (7 + 9);   // PIN_INSET + text offset on both sides
+  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
+
+  let draft = { .state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
     draft = {
-      ...draft,
+      .draft,
       devices: [
-        ...draft.devices,
+        .draft.devices,
         {
           id,
           type,
           x: x + i * 40,
           y: y + i * 40,
-          w,
-          h: Math.max(h ?? 0, autoH, 80),  // ensure large enough for pins
+          w: Math.max(w, autoW),
+          h: Math.max(h ?? 0, autoH, 80),
           color,
           customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
           manufacturer,
@@ -190,7 +199,6 @@ export function addDevice(
   }
   return draft;
 }
-
 
 export function deleteSelectedDevices(state: GraphState, selectedIds: Set<string>): GraphState {
   const keep = new Set(state.devices.filter(d => !selectedIds.has(d.id)).map(d => d.id));
