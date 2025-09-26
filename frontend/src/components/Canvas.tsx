@@ -4,16 +4,13 @@ import { clampZoom } from "../lib/editor";
 
 type Device = GraphState["devices"][number];
 
-type ConnectionEnd = { deviceId: string; portName?: string };
-
 type Props = {
   graph?: GraphState | null;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
-  onChange?: (next: GraphState) => void; // fired when positions change via drag
+  onChange?: (next: GraphState) => void;
   showGrid?: boolean;
 
-  // view controls
   zoom?: number; // default 1
   pan?: { x: number; y: number }; // default {0,0}
   onViewChange?: (v: { zoom?: number; pan?: { x: number; y: number } }) => void;
@@ -44,7 +41,8 @@ export function Canvas({
   // compute positions (auto if no x/y)
   const { positioned, width, height } = useMemo(() => {
     const out = devices.map((d, i) => {
-      if (typeof d.x === "number" && typeof d.y === "number") return d;
+      if (typeof d.x === "number" && typeof d.y === "number")
+        return { ...d, w: d.w ?? BOX_W, h: d.h ?? BOX_H };
       const col = i % COLS;
       const row = Math.floor(i / COLS);
       const x = 40 + col * (BOX_W + GAP_X);
@@ -52,14 +50,18 @@ export function Canvas({
       return { ...d, x, y, w: d.w ?? BOX_W, h: d.h ?? BOX_H };
     });
 
-    const w =
+    // make "world" comfortably large so grid never looks clipped
+    const minW = 3000;
+    const minH = 2000;
+    const contentW =
       (Math.min(out.length - 1, COLS - 1) + 1) * (BOX_W + GAP_X) + 80 || 800;
     const rows = Math.ceil(out.length / COLS);
-    const h = rows * (BOX_H + GAP_Y) + 120 || 600;
+    const contentH = rows * (BOX_H + GAP_Y) + 120 || 600;
+
     return {
       positioned: out,
-      width: Math.max(w, 800),
-      height: Math.max(h, 600),
+      width: Math.max(contentW, minW),
+      height: Math.max(contentH, minH),
     };
   }, [devices]);
 
@@ -74,24 +76,19 @@ export function Canvas({
   } | null>(null);
 
   function centerOf(d: Device) {
-    return { cx: (d.x ?? 0) + BOX_W / 2, cy: (d.y ?? 0) + BOX_H / 2 };
+    return { cx: (d.x ?? 0) + (d.w ?? BOX_W) / 2, cy: (d.y ?? 0) + (d.h ?? BOX_H) / 2 };
   }
 
   // global mouse handlers while dragging device
   useEffect(() => {
     function onMove(e: MouseEvent) {
       if (!drag || !graph || !onChange) return;
-      // account for zoom when converting screen delta to canvas units
       const dx = (e.clientX - drag.startX) / zoom;
       const dy = (e.clientY - drag.startY) / zoom;
 
       const nextDevices = graph.devices.map((d) =>
         d.id === drag.id
-          ? {
-              ...d,
-              x: Math.max(0, drag.origX + dx),
-              y: Math.max(0, drag.origY + dy),
-            }
+          ? { ...d, x: Math.max(0, drag.origX + dx), y: Math.max(0, drag.origY + dy) }
           : d
       );
       onChange({ ...graph, devices: nextDevices });
@@ -110,31 +107,23 @@ export function Canvas({
   }, [drag, graph, onChange, zoom]);
 
   // ---- pan/zoom handlers ----
-  const viewPanRef = useRef(pan);
-  useEffect(() => {
-    viewPanRef.current = pan;
-  }, [pan]);
+  const [panning, setPanning] = useState<{ sx: number; sy: number; px: number; py: number } | null>(null);
 
   const onWheel: React.WheelEventHandler = (e) => {
     if (!onViewChange) return;
-    // zoom around cursor
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     const nextZoom = clampZoom(zoom * factor);
-    // Keep it simple: no focal-point math; adjust pan a bit for feel
-    if (nextZoom !== zoom) {
-      onViewChange({ zoom: nextZoom });
-    }
+    if (nextZoom !== zoom) onViewChange({ zoom: nextZoom });
   };
 
-  // Right mouse drag to pan
-  const [panning, setPanning] = useState<{ sx: number; sy: number; px: number; py: number } | null>(null);
-  const onMouseDown: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    // Right button -> pan
+  const onMouseDownWorld: React.MouseEventHandler<HTMLDivElement> = (e) => {
+    // Right button drag to pan
     if (e.button === 2) {
       e.preventDefault();
       setPanning({ sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y });
     }
   };
+
   useEffect(() => {
     function move(e: MouseEvent) {
       if (!panning || !onViewChange) return;
@@ -155,14 +144,19 @@ export function Canvas({
     };
   }, [panning, onViewChange]);
 
-  // context menu disable (so right-drag works cleanly)
-  const onContextMenu: React.MouseEventHandler = (e) => {
-    e.preventDefault();
-  };
+  const onContextMenu: React.MouseEventHandler = (e) => e.preventDefault();
 
   // click background to clear selection
   const onBackgroundClick = (e: React.MouseEvent) => {
     if (e.target === wrapRef.current) onSelect?.(null);
+  };
+
+  // --- helpers to render port pins on left/right ---
+  const getPortsBySide = (d: Device) => {
+    const ports = d.ports ?? [];
+    const left = ports.filter((p: any) => p.direction === "IN");
+    const right = ports.filter((p: any) => p.direction === "OUT");
+    return { left, right };
   };
 
   return (
@@ -170,56 +164,30 @@ export function Canvas({
       ref={wrapRef}
       onClick={onBackgroundClick}
       onWheel={onWheel}
-      onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
       className="m-4 h-[calc(100%-2rem)] rounded-2xl border border-slate-700 bg-slate-900/40 relative overflow-hidden"
     >
       {/* world space (panned & zoomed) */}
       <div
         className="w-full h-full relative"
+        onMouseDown={onMouseDownWorld}
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: "0 0",
+          // Infinite-looking grid by CSS gradients; it scales with zoom because it's on the world
+          backgroundImage: showGrid
+            ? `
+                linear-gradient(to right, rgba(148,163,184,0.12) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(148,163,184,0.12) 1px, transparent 1px)
+              `
+            : "none",
+          backgroundSize: showGrid ? "24px 24px, 24px 24px" : undefined,
+          backgroundPosition: "0 0, 0 0",
         }}
       >
         <div style={{ width, height, position: "relative" }}>
-          {/* grid */}
-          {showGrid && (
-            <>
-              <svg width={width} height={height} className="absolute inset-0">
-                <defs>
-                  <pattern
-                    id="minor-grid"
-                    width="24"
-                    height="24"
-                    patternUnits="userSpaceOnUse"
-                  >
-                    <path
-                      d="M 24 0 L 0 0 0 24"
-                      fill="none"
-                      stroke="rgba(148,163,184,0.12)"
-                      strokeWidth="1"
-                    />
-                  </pattern>
-                </defs>
-              </svg>
-              <div
-                className="absolute inset-0"
-                style={{ background: "url(#)" }}
-              >
-                <svg width={width} height={height} className="absolute inset-0">
-                  <rect width="100%" height="100%" fill="url(#minor-grid)" />
-                </svg>
-              </div>
-            </>
-          )}
-
           {/* connections */}
-          <svg
-            width={width}
-            height={height}
-            className="absolute inset-0 pointer-events-none"
-          >
+          <svg width={width} height={height} className="absolute inset-0 pointer-events-none">
             {(graph?.connections ?? []).map((c, i) => {
               const a = deviceMap.get(c.from.deviceId);
               const b = deviceMap.get(c.to.deviceId);
@@ -243,46 +211,63 @@ export function Canvas({
           {/* devices */}
           {positioned.map((d) => {
             const isSel = d.id === selectedId;
+            const w = d.w ?? BOX_W;
+            const h = d.h ?? BOX_H;
+            const { left, right } = getPortsBySide(d);
+
             return (
               <div
                 key={d.id}
-                style={{
-                  left: d.x,
-                  top: d.y,
-                  width: d.w ?? BOX_W,
-                  height: d.h ?? BOX_H,
-                  cursor: "grab",
-                }}
+                style={{ left: d.x, top: d.y, width: w, height: h, cursor: "grab" }}
                 className={`absolute rounded-xl border shadow-sm transition-all
-                ${
-                  isSel
-                    ? "border-blue-400 ring-2 ring-blue-400/40"
-                    : "border-slate-600"
-                }
-                bg-slate-800/80 hover:shadow-md select-none`}
+                  ${isSel ? "border-blue-400 ring-2 ring-blue-400/40" : "border-slate-600"}
+                  bg-slate-800/80 hover:shadow-md select-none`}
                 onMouseDown={(e) => {
-                  if (e.button !== 0) return; // left only for device drag
+                  if (e.button !== 0) return;
                   e.stopPropagation();
                   onSelect?.(d.id);
-                  setDrag({
-                    id: d.id,
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    origX: d.x ?? 0,
-                    origY: d.y ?? 0,
-                  });
+                  setDrag({ id: d.id, startX: e.clientX, startY: e.clientY, origX: d.x ?? 0, origY: d.y ?? 0 });
                 }}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   onSelect?.(d.id);
-                  // future: open properties editor
                 }}
               >
-                <div className="px-3 pt-2 text-sm font-medium text-slate-100">
+                {/* Header */}
+                <div className="px-3 pt-2 text-sm font-medium text-slate-100 truncate">
                   {d.customName ?? d.id}
                 </div>
-                <div className="px-3 text-xs text-slate-400">
-                  {d.type ?? "device"}
+                <div className="px-3 text-[11px] text-slate-400 flex gap-2">
+                  <span>{d.type ?? "device"}</span>
+                  {((d as any).manufacturer || (d as any).model) && (
+                    <span className="text-slate-500">
+                      • {(d as any).manufacturer ?? ""} {(d as any).model ?? ""}
+                    </span>
+                  )}
+                </div>
+
+                {/* Port rails */}
+                {/* Left (IN) */}
+                <div className="absolute left-0 top-0 bottom-0 w-3">
+                  {left.map((p: any, idx: number) => {
+                    const y = ((idx + 1) * h) / (left.length + 1);
+                    return (
+                      <div key={p.name} className="absolute -left-[6px]" style={{ top: y - 4 }}>
+                        <div className="w-2 h-2 rounded-full bg-emerald-400 border border-emerald-300" title={`${p.name} (${p.type})`} />
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Right (OUT) */}
+                <div className="absolute right-0 top-0 bottom-0 w-3">
+                  {right.map((p: any, idx: number) => {
+                    const y = ((idx + 1) * h) / (right.length + 1);
+                    return (
+                      <div key={p.name} className="absolute -right-[6px]" style={{ top: y - 4 }}>
+                        <div className="w-2 h-2 rounded-full bg-sky-400 border border-sky-300" title={`${p.name} (${p.type})`} />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -292,7 +277,7 @@ export function Canvas({
 
       {/* small hint overlay */}
       <div className="absolute bottom-2 left-3 text-[11px] text-slate-400 bg-black/30 px-2 py-1 rounded">
-        Wheel = Zoom • Right-drag = Pan • Click = Select • Drag = Move
+        Wheel = Zoom • Right-drag = Pan • Click = Select • Drag = Move • Ports: IN=left, OUT=right
       </div>
     </div>
   );
