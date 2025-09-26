@@ -17,7 +17,9 @@ export default function App() {
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [aiPrompt, setAiPrompt] = useState("");
   const [graph, setGraph] = useState<any>(null); // holds { devices, connections? }
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // --- AI run ---
   const handleRunAi = async () => {
     const prompt = aiPrompt.trim();
     if (!prompt) return;
@@ -27,9 +29,9 @@ export default function App() {
       const result = await api.generate(prompt);
 
       console.log("GENERATE result:", result);
-      setGraph(result); // <-- render on canvas
+      setGraph(result); // render on canvas
+      setSelectedId(null);
 
-      // Tiny confirmation
       alert("Generate OK. Check console for JSON.");
     } catch (err: any) {
       console.error(err);
@@ -37,6 +39,37 @@ export default function App() {
     } finally {
       setAiPrompt("");
     }
+  };
+
+  // --- Canvas change handler (dragging updates x/y, etc.) ---
+  const handleGraphChange = (next: any) => {
+    setGraph(next);
+  };
+
+  // --- Toolbar actions ---
+  let copySeq = 1;
+  const handleCopy = () => {
+    if (!graph || !selectedId) return;
+    const orig = graph.devices.find((d: any) => d.id === selectedId);
+    if (!orig) return;
+    const clone = {
+      ...orig,
+      id: `${orig.id}_copy${copySeq++}`,
+      x: (orig.x ?? 0) + 24,
+      y: (orig.y ?? 0) + 24,
+    };
+    setGraph({ ...graph, devices: [...graph.devices, clone] });
+    setSelectedId(clone.id);
+  };
+
+  const handleDelete = () => {
+    if (!graph || !selectedId) return;
+    const devices = graph.devices.filter((d: any) => d.id !== selectedId);
+    const connections = (graph.connections ?? []).filter(
+      (c: any) => c.from.deviceId !== selectedId && c.to.deviceId !== selectedId
+    );
+    setGraph({ ...graph, devices, connections });
+    setSelectedId(null);
   };
 
   return (
@@ -75,10 +108,20 @@ export default function App() {
           </button>
 
           <div className="grid grid-cols-2 gap-2">
-            <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm">
+            <button
+              className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
+              onClick={handleCopy}
+              disabled={!graph || !selectedId}
+              title={selectedId ? `Copy ${selectedId}` : "Select a device first"}
+            >
               Copy
             </button>
-            <button className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm">
+            <button
+              className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleDelete}
+              disabled={!graph || !selectedId}
+              title={selectedId ? `Delete ${selectedId}` : "Select a device first"}
+            >
               Delete
             </button>
           </div>
@@ -125,7 +168,12 @@ export default function App() {
         {/* Center canvas */}
         <main className="relative">
           <div className="absolute inset-0">
-            <Canvas graph={graph} />
+            <Canvas
+              graph={graph}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onChange={handleGraphChange}
+            />
           </div>
         </main>
 
@@ -149,7 +197,11 @@ export default function App() {
             <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
               <div className="text-slate-300 text-sm mb-2">Selection</div>
               <div className="text-slate-400 text-sm">
-                Nothing selected. Double-click a device to edit.
+                {selectedId ? (
+                  <>Selected: <span className="text-slate-200">{selectedId}</span></>
+                ) : (
+                  <>Nothing selected. Double-click a device to edit.</>
+                )}
               </div>
             </div>
           </div>
