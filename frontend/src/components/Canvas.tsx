@@ -24,26 +24,31 @@ type Props = {
 
 const BOX_W = 160;
 const BOX_H = 80;
+
+// IMPORTANT: This is the *actual* header height including padding/border.
+// We enforce border-box so this value is exact.
 const HEADER_H = 36;
-const PIN_INSET = 7;        // pin circles stay inside the box
+
+// Pin geometry
+const PIN_INSET = 7;
 const PORT_FONT = 10;
 
-// === Unified pin layout helpers (single source of truth) ===================
-// Reserve top/bottom padding inside the content area.
-// Pins are placed at k/(n+1) of the inner span (k = 1..n) -> evenly spaced
+// Pin vertical padding inside the content area (below header)
 const TOP_PAD = 20;
 const BOT_PAD = 20;
 
-/** Return the *local* Y (inside a device's own SVG) for pin index `idx` of `count`. */
+// ============================================================================
+// Unified pin layout helpers (single source of truth)
+
+// Y within a device's local SVG for pin index `idx` of `count`
 function pinYLocal(boxH: number, count: number, idx: number): number {
   const inner = Math.max(0, boxH - HEADER_H - TOP_PAD - BOT_PAD);
   if (count <= 0) return HEADER_H + TOP_PAD + inner / 2;
   const step = inner / (count + 1);
-  // place pins at 1/(n+1), 2/(n+1), ... n/(n+1)
   return HEADER_H + TOP_PAD + step * (idx + 1);
 }
 
-/** World position for a given port name & direction on a device. */
+// World position for a given port name & direction on a device
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const w = device.w ?? BOX_W;
   const h = device.h ?? BOX_H;
@@ -52,19 +57,40 @@ function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
 
   if (dir === "IN") {
     const idx = INs.findIndex((p) => p.name === portName);
-    return {
-      x: (device.x ?? 0) + PIN_INSET,
-      y: (device.y ?? 0) + pinYLocal(h, INs.length, idx),
-    };
+    return { x: (device.x ?? 0) + PIN_INSET, y: (device.y ?? 0) + pinYLocal(h, INs.length, idx) };
   } else {
     const idx = OUTs.findIndex((p) => p.name === portName);
-    return {
-      x: (device.x ?? 0) + w - PIN_INSET,
-      y: (device.y ?? 0) + pinYLocal(h, OUTs.length, idx),
-    };
+    return { x: (device.x ?? 0) + w - PIN_INSET, y: (device.y ?? 0) + pinYLocal(h, OUTs.length, idx) };
   }
 }
-// =========================================================================
+
+// Compute min box size so pin labels don't overlap and always stay inside
+function minSizeForDevice(d: Device) {
+  const w = d.w ?? BOX_W;
+  const h = d.h ?? BOX_H;
+
+  const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
+  const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
+  const rows = Math.max(INs.length, OUTs.length);
+
+  // Width: left labels + pins + middle gap + right labels + pins
+  const CHAR_W = Math.ceil(PORT_FONT * 0.6);
+  const leftLen  = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const MIDDLE_GAP = 24;
+  const minW = Math.max(
+    160,
+    2 * (PIN_INSET + 9) + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
+  );
+
+  // Height: header + paddings + uniform vertical spacing
+  const ROW_SP = 24;
+  const contentMin = rows > 0 ? (rows + 1) * (ROW_SP / 1) : ROW_SP; // keep roomy for 1 row
+  const minH = Math.max(80, HEADER_H + TOP_PAD + BOT_PAD + contentMin);
+
+  return { minW, minH, w, h };
+}
+// ============================================================================
 
 export function Canvas({
   graph,
@@ -81,10 +107,7 @@ export function Canvas({
   gridSize = 16,
 }: Props) {
   const devices = graph.devices;
-  const deviceMap = useMemo(
-    () => new Map(devices.map((d) => [d.id, d] as const)),
-    [devices]
-  );
+  const deviceMap = useMemo(() => new Map(devices.map((d) => [d.id, d] as const)), [devices]);
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -140,7 +163,7 @@ export function Canvas({
     };
   }, [drag, graph, onChange, zoom, snapEnabled, gridSize]);
 
-  // RESIZE (state declared before effect)
+  // RESIZE (declare state before effect)
   const [resizing, setResizing] = useState<null | {
     id: string; sx: number; sy: number; w: number; h: number; raf?: number;
   }>(null);
@@ -151,9 +174,11 @@ export function Canvas({
       const dx = (e.clientX - resizing.sx) / zoom;
       const dy = (e.clientY - resizing.sy) / zoom;
 
-      // Basic min size; pins are always recomputed from current h
-      const nw = Math.max(140, resizing.w + dx);
-      const nh = Math.max(HEADER_H + TOP_PAD + BOT_PAD + 24, resizing.h + dy);
+      const dev = graph.devices.find((d) => d.id === resizing.id)!;
+      const { minW, minH } = minSizeForDevice(dev);
+
+      const nw = Math.max(minW, resizing.w + dx);
+      const nh = Math.max(minH, resizing.h + dy);
 
       cancelAnimationFrame(resizing.raf ?? 0);
       const raf = requestAnimationFrame(() => {
@@ -181,7 +206,9 @@ export function Canvas({
   }, [resizing, graph, onChange, zoom]);
 
   // PAN / ZOOM
-  const [panning, setPanning] = useState<{ sx: number; sy: number; px: number; py: number } | null>(null);
+  const [panning, setPanning] =
+    useState<{ sx: number; sy: number; px: number; py: number } | null>(null);
+
   const onWheel: React.WheelEventHandler = (e) => {
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     const next = clampZoom(zoom * factor);
@@ -234,14 +261,13 @@ export function Canvas({
     setCursorWorld(null);
   }
 
-  // Device-local SVG that uses the SAME pinYLocal() math as the world overlay
+  // Device-local SVG that uses exactly the same math
   function DevicePortsSVG({ d }: { d: Device }) {
     const w = d.w ?? BOX_W;
     const h = d.h ?? BOX_H;
     const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
     const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
 
-    // highlight whichever port is "armed"
     const armed =
       pending && pending.from && pending.from.deviceId === d.id
         ? pending.from.portName
@@ -342,14 +368,12 @@ export function Canvas({
           }
         }}
         onMouseMove={(e) => {
-          // ghost wire position
           if (pending && wrapRef.current) {
             const rect = wrapRef.current.getBoundingClientRect();
             const worldX = (e.clientX - rect.left) / zoom - pan.x;
-            const worldY = (e.clientY - rect.top) / zoom - pan.y;
+            const worldY = (e.clientY - rect.top)  / zoom - pan.y;
             setCursorWorld({ x: worldX, y: worldY });
           }
-
           if (!panning) return;
           const dx = (e.clientX - panning.sx) / zoom;
           const dy = (e.clientY - panning.sy) / zoom;
@@ -414,10 +438,9 @@ export function Canvas({
               }}
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
-                const ids =
-                  e.shiftKey || e.metaKey || e.ctrlKey
-                    ? Array.from(new Set([...selectedIds, d.id]))
-                    : [d.id];
+                const ids = e.shiftKey || e.metaKey || e.ctrlKey
+                  ? Array.from(new Set([...selectedIds, d.id]))
+                  : [d.id];
 
                 if (!(e.shiftKey || e.metaKey || e.ctrlKey)) onToggleSelect(d.id, false);
                 else onToggleSelect(d.id, true);
@@ -426,22 +449,23 @@ export function Canvas({
                   ids,
                   startX: e.clientX,
                   startY: e.clientY,
-                  orig: Object.fromEntries(
-                    ids.map((id) => {
-                      const dev = devices.find((x) => x.id === id)!;
-                      return [id, { x: dev.x ?? 0, y: dev.y ?? 0 }];
-                    })
-                  ),
+                  orig: Object.fromEntries(ids.map((id) => {
+                    const dev = devices.find((x) => x.id === id)!;
+                    return [id, { x: dev.x ?? 0, y: dev.y ?? 0 }];
+                  })),
                 });
               }}
             >
-              {/* header */}
-              <div className="px-2 py-1.5 border-b border-white/10" style={{ background: "rgba(0,0,0,0.15)", height: HEADER_H }}>
-                <div className="text-[12px] flex items-center justify-between">
+              {/* header (STRICT border-box height = HEADER_H) */}
+              <div
+                className="box-border px-2 border-b border-white/10 flex flex-col justify-center"
+                style={{ background: "rgba(0,0,0,0.15)", height: HEADER_H }}
+              >
+                <div className="text-[12px] flex items-center justify-between leading-none">
                   <div className="font-medium truncate">{d.customName ?? d.id}</div>
                   <div className="opacity-70 ml-2 truncate">{d.type}</div>
                 </div>
-                <div className="text-[10px] opacity-85 mt-0.5 truncate">
+                <div className="text-[10px] opacity-85 mt-1 truncate leading-none">
                   {(d as any).manufacturer || ""}{((d as any).manufacturer && (d as any).model) ? " • " : ""}{(d as any).model || ""}
                 </div>
               </div>
