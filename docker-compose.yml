@@ -1,18 +1,21 @@
+version: "3.9"
+
 services:
   backend:
-    image: kikulik/leonardo-backend:latest
-    container_name: leonardo-backend
-    ports: ["10001:10001"]
-    restart: unless-stopped
+    image: docker.io/kikulik/leonardo-backend:latest   # public image on Docker Hub
+    ports:
+      - "10001:10001"
     environment:
       PYTHONUNBUFFERED: "1"
       BUILD_ID: ${BUILD_ID}
+    restart: unless-stopped
 
   frontend:
-    image: kikulik/leonardo-frontend:latest
-    container_name: leonardo-frontend
-    depends_on: [backend]
-    ports: ["10201:80"]
-    restart: unless-stopped
+    image: docker.io/kikulik/leonardo-frontend:latest  # public image on Docker Hub
+    depends_on:
+      - backend
+    ports:
+      - "10201:80"
     environment:
       BUILD_ID: ${BUILD_ID}
+    restart: unless-stopped
