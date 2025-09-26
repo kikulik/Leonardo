@@ -7,22 +7,20 @@ import AddEquipmentModal from "./components/AddEquipmentModal";
 
 import {
   addDevice,
-  createConnection,
   copySelectedDevices,
   pasteDevices,
   deleteSelectedDevices,
   saveProject,
-  loadProjectFromFile,
   clampZoom,
   type GraphState,
   type Device,
 } from "./lib/editor";
 
 /**
- * Adds:
- * - Infinite-looking grid (smooth pan/zoom)
- * - Add Equipment modal (quantity, name, manufacturer, model, size, IN/OUT ports)
- * - Properties panel for selected device (edit size/name/manufacturer/model + manage ports)
+ * v0.4
+ * - Boxes show Device ID (e.g., CAM.01)
+ * - Copy/Paste auto-increments ID by type (CAM.02…)
+ * - OUT→IN port linking on Canvas
  */
 
 const LS_KEY = "leonardo.graph.v1";
@@ -45,11 +43,10 @@ export default function App() {
   const [clipboard, setClipboard] = useState<Device[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- AI run ---
+  // --- AI run (unchanged; normalize if needed) ---
   const handleRunAi = async () => {
     const prompt = aiPrompt.trim();
     if (!prompt) return;
-
     try {
       const result = await api.generate(prompt);
       const next: GraphState = {
@@ -85,14 +82,13 @@ export default function App() {
   // --- Canvas change handler (dragging updates x/y, etc.) ---
   const handleGraphChange = (next: GraphState) => setGraph(next);
 
-  // --- Add Equipment modal submit ---
+  // --- Add Equipment submit ---
   const handleAddSubmit = (p: {
     type: string; quantity: number; customNameBase?: string;
     manufacturer?: string; model?: string; w?: number; h?: number;
     inPorts?: { type: string; quantity: number };
     outPorts?: { type: string; quantity: number };
   }) => {
-    // prepare default ports for each new device
     const defaults: any[] = [];
     const addPorts = (kind: "IN" | "OUT", t?: string, qty?: number) => {
       const n = Math.max(0, qty || 0);
@@ -107,40 +103,30 @@ export default function App() {
     addPorts("IN", p.inPorts?.type, p.inPorts?.quantity);
     addPorts("OUT", p.outPorts?.type, p.outPorts?.quantity);
 
-    setGraph((g) => {
-      let next = addDevice(g, {
+    setGraph((g) =>
+      addDevice(g, {
         type: p.type,
         count: p.quantity || 1,
         customNameBase: p.customNameBase,
         w: p.w || 160,
         h: p.h || 80,
+        manufacturer: p.manufacturer,
+        model: p.model,
         defaultPorts: defaults,
-      });
-      // inject manufacturer/model into the newly added tail devices
-      const addedCount = p.quantity || 1;
-      const startIdx = next.devices.length - addedCount;
-      for (let i = startIdx; i < next.devices.length; i++) {
-        next.devices[i] = {
-          ...next.devices[i],
-          manufacturer: p.manufacturer || next.devices[i].manufacturer,
-          model: p.model || next.devices[i].model,
-        } as any;
-      }
-      return { ...next };
-    });
-
+      })
+    );
     setAddOpen(false);
   };
 
   // --- Toolbar actions ---
   const handleCopy = () => {
     if (!selectedId) return;
-    const copied = copySelectedDevices(graph, new Set([selectedId]));
-    setClipboard(copied);
+    setClipboard(copySelectedDevices(graph, new Set([selectedId])));
   };
 
   const handlePaste = () => {
-    if (clipboard.length === 0) return;
+    if (!clipboard.length) return;
+    // IDs will auto-increment by type on paste
     setGraph((g) => pasteDevices(g, clipboard));
   };
 
@@ -148,22 +134,6 @@ export default function App() {
     if (!selectedId) return;
     setGraph((g) => deleteSelectedDevices(g, new Set([selectedId])));
     setSelectedId(null);
-  };
-
-  const handleSaveLocal = () => {
-    localStorage.setItem(LS_KEY, JSON.stringify(graph));
-    alert("Saved to localStorage.");
-  };
-
-  const handleLoadLocal = () => {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return alert("No local save found.");
-    try {
-      setGraph(JSON.parse(raw));
-      setSelectedId(null);
-    } catch {
-      alert("Corrupted local save.");
-    }
   };
 
   const handleSaveFile = () => saveProject(graph, "project.json");
@@ -190,7 +160,7 @@ export default function App() {
     setZoom(1);
   };
 
-  // --- Properties panel handlers (selected device) ---
+  // --- Properties panel (selected device) ---
   const sel = selectedId ? graph.devices.find((d) => d.id === selectedId) : null;
 
   const updateSelectedDevice = (patch: Partial<Device>) => {
@@ -209,13 +179,11 @@ export default function App() {
     const nextPorts = [...existing, { name, type: type.toUpperCase(), direction }];
     updateSelectedDevice({ ports: nextPorts as any });
   };
-
   const deletePort = (portName: string) => {
     if (!sel) return;
     const nextPorts = (sel.ports ?? []).filter((p) => p.name !== portName);
     updateSelectedDevice({ ports: nextPorts as any });
   };
-
   const updatePort = (portName: string, patch: Partial<{ name: string; type: string; direction: "IN" | "OUT" }>) => {
     if (!sel) return;
     const nextPorts = (sel.ports ?? []).map((p) =>
@@ -236,11 +204,11 @@ export default function App() {
           <div className="font-semibold tracking-wide">Leonardo</div>
           <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">Broadcast Schematic Editor</div>
         </div>
-        <div className="text-xs text-slate-300">v0.3</div>
+        <div className="text-xs text-slate-300">v0.4</div>
       </header>
 
       {/* Body */}
-      <div className="h-[calc(100vh-56px)] grid grid-cols-[20rem,1fr,22rem]">
+      <div className="h:[calc(100vh-56px)] grid grid-cols-[20rem,1fr,22rem]">
         {/* Left tools */}
         <aside className="border-r border-slate-700/60 p-4 overflow-y-auto">
           <h3 className="text-sm font-semibold text-slate-200 mb-3">Equipment</h3>
@@ -259,8 +227,6 @@ export default function App() {
 
           <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">Project</h3>
           <div className="grid grid-cols-2 gap-2">
-            <button className="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg text-sm" onClick={handleSaveLocal}>Save (local)</button>
-            <button className="bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded-lg text-sm" onClick={handleLoadLocal}>Load (local)</button>
             <button className="bg-green-700 hover:bg-green-800 px-3 py-2 rounded-lg text-sm" onClick={handleSaveFile}>Save (file)</button>
             <button className="bg-purple-700 hover:bg-purple-800 px-3 py-2 rounded-lg text-sm" onClick={handleLoadFileChoose}>Load (file)</button>
             <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={onFileChosen} />
@@ -333,17 +299,10 @@ export default function App() {
                       <div className="col-span-2 text-slate-200 text-sm">{sel.id}</div>
 
                       <div>
-                        <label className="text-xs text-slate-400">Name</label>
-                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
-                          value={sel.customName ?? ""} placeholder="Custom name"
-                          onChange={(e) => updateSelectedDevice({ customName: e.target.value })} />
-                      </div>
-                      <div>
                         <label className="text-xs text-slate-400">Type</label>
                         <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
                           value={sel.type ?? ""} onChange={(e) => updateSelectedDevice({ type: e.target.value })} />
                       </div>
-
                       <div>
                         <label className="text-xs text-slate-400">Manufacturer</label>
                         <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
