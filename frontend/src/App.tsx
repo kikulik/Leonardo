@@ -11,8 +11,10 @@ import {
   deleteSelectedDevices,
   saveProject,
   clampZoom,
+  withPortIds,
   type GraphState,
   type Device,
+  type Port,
 } from "./lib/editor";
 
 type Mode = "select" | "pan" | "connect";
@@ -54,7 +56,7 @@ export default function App() {
   useEffect(() => {
     try {
       const txt = localStorage.getItem(LS_KEY);
-      if (txt) setGraph(JSON.parse(txt));
+      if (txt) setGraph(withPortIds(JSON.parse(txt)));
     } catch {}
   }, []);
 
@@ -139,7 +141,7 @@ export default function App() {
     if (!f) return;
     try {
       const text = await f.text();
-      setGraph(JSON.parse(text));
+      setGraph(withPortIds(JSON.parse(text)));
       setSelectedIds(new Set());
     } catch { alert("Failed to load file."); }
     finally { e.currentTarget.value = ""; }
@@ -154,11 +156,15 @@ export default function App() {
     inPorts?: { type: string; quantity: number };
     outPorts?: { type: string; quantity: number };
   }) => {
-    const defaults: any[] = [];
-    const addPorts = (dir: "IN" | "OUT", t?: string, qty?: number) => {
+    const defaults: Partial<Port>[] = [];
+    const addPorts = (direction: "IN" | "OUT", t?: string, qty?: number) => {
       const n = Math.max(0, qty || 0);
       for (let i = 1; i <= n; i++) {
-        defaults.push({ name: `${(t || "PORT").toUpperCase()}_${dir}_${i}`, type: (t || "GEN").toUpperCase(), direction: dir });
+        defaults.push({
+          name: `${(t || "PORT").toUpperCase()}_${direction}_${i}`,
+          type: (t || "GEN").toUpperCase(),
+          direction,
+        });
       }
     };
     addPorts("IN", p.inPorts?.type, p.inPorts?.quantity);
@@ -176,7 +182,7 @@ export default function App() {
     setAddOpen(false);
   };
 
-  // simple AI
+  // quick-add from text bar
   const parseAi = (text: string) => {
     const t = text.trim().toLowerCase();
     const aliases: Record<string, string> = {
@@ -231,6 +237,41 @@ export default function App() {
     setSelectedIds(new Set());
   };
 
+  // port helpers for properties panel (use stable id)
+  const updatePortById = (devId: string, portId: string, patch: Partial<Port>) => {
+    setGraph((g) => ({
+      ...g,
+      devices: g.devices.map((d) =>
+        d.id !== devId ? d : { ...d, ports: d.ports.map((p) => (p.id === portId ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p)) }
+      ),
+    }));
+  };
+  const addPort = (devId: string, dir: "IN" | "OUT", type = "SDI") => {
+    setGraph((g) => ({
+      ...g,
+      devices: g.devices.map((d) =>
+        d.id !== devId
+          ? d
+          : {
+              ...d,
+              ports: [
+                ...d.ports,
+                { id: crypto?.randomUUID?.() || Math.random().toString(36).slice(2), name: `${type.toUpperCase()}_${dir}_${d.ports.filter(p=>p.direction===dir).length + 1}`, type: type.toUpperCase(), direction: dir },
+              ],
+            }
+      ),
+    }));
+  };
+  const delPort = (devId: string, portId: string) => {
+    setGraph((g) => ({
+      ...g,
+      devices: g.devices.map((d) =>
+        d.id !== devId ? d : { ...d, ports: d.ports.filter((p) => p.id !== portId) }
+      ),
+      // note: connections keep using names; if you delete a port, related connections should be cleaned elsewhere if desired
+    }));
+  };
+
   return (
     <div className="min-h-screen flex flex-col text-white" style={{ background: "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)" }}>
       {/* Top */}
@@ -240,7 +281,7 @@ export default function App() {
           <div className="font-semibold tracking-wide">Leonardo</div>
           <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">Broadcast Schematic Editor</div>
         </div>
-        <div className="text-xs text-slate-300">v0.8 • autosave</div>
+        <div className="text-xs text-slate-300">v0.9 • autosave</div>
       </header>
 
       {/* Body */}
@@ -259,10 +300,7 @@ export default function App() {
               <input type="checkbox" checked={snapEnabled} onChange={(e) => setSnapEnabled(e.target.checked)} />
               Snap to grid
             </label>
-            <button
-              className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
-              onClick={() => setShowGrid((v) => !v)}
-            >
+            <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => setShowGrid((v) => !v)}>
               {showGrid ? "Hide Grid" : "Show Grid"}
             </button>
           </div>
@@ -340,16 +378,6 @@ export default function App() {
                   const update = (patch: Partial<Device>) =>
                     setGraph((g) => ({ ...g, devices: g.devices.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
 
-                  const addPort = (direction: "IN" | "OUT", type = "SDI") => {
-                    const list = d.ports ?? [];
-                    const n = list.filter((p) => p.direction === direction).length + 1;
-                    const name = `${type.toUpperCase()}_${direction}_${n}`;
-                    update({ ports: [...list, { name, type: type.toUpperCase(), direction }] as any });
-                  };
-                  const delPort = (name: string) => update({ ports: (d.ports ?? []).filter((p) => p.name !== name) as any });
-                  const updPort = (name: string, patch: any) =>
-                    update({ ports: (d.ports ?? []).map((p) => (p.name === name ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p)) as any });
-
                   return (
                     <div key={id} className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
                       <div className="text-slate-300 text-sm mb-1">{d.id}</div>
@@ -383,40 +411,40 @@ export default function App() {
                       <div className="flex items-center justify-between mt-2">
                         <div className="text-slate-300 text-sm">Ports</div>
                         <div className="flex gap-2">
-                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort("IN")}>+ IN</button>
-                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort("OUT")}>+ OUT</button>
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort(id, "IN")}>+ IN</button>
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort(id, "OUT")}>+ OUT</button>
                         </div>
                       </div>
 
                       <div className="space-y-2">
-                        {(d.ports ?? []).map((p, idx) => (
-                          <div key={`port-${idx}`} className="grid grid-cols-12 gap-2 items-center">
+                        {d.ports.map((p) => (
+                          <div key={p.id} className="grid grid-cols-12 gap-2 items-center">
                             <div className="col-span-4">
                               <input
                                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
                                 value={p.name}
-                                onChange={(e) => updPort(p.name, { name: e.target.value })}
+                                onChange={(e) => updatePortById(id, p.id, { name: e.target.value })}
                               />
                             </div>
                             <div className="col-span-3">
                               <input
                                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
                                 value={p.type}
-                                onChange={(e) => updPort(p.name, { type: e.target.value })}
+                                onChange={(e) => updatePortById(id, p.id, { type: e.target.value })}
                               />
                             </div>
                             <div className="col-span-3">
                               <select
                                 className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
                                 value={p.direction}
-                                onChange={(e) => updPort(p.name, { direction: e.target.value as any })}
+                                onChange={(e) => updatePortById(id, p.id, { direction: e.target.value as any })}
                               >
                                 <option value="IN">IN (left)</option>
                                 <option value="OUT">OUT (right)</option>
                               </select>
                             </div>
                             <div className="col-span-2 text-right">
-                              <button className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1 rounded" onClick={() => delPort(p.name)}>Delete</button>
+                              <button className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1 rounded" onClick={() => delPort(id, p.id)}>Delete</button>
                             </div>
                           </div>
                         ))}
