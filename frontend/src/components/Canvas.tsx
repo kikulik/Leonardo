@@ -126,14 +126,46 @@ export function Canvas({
   const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
 
   function handlePortClick(d: Device, p: Port) {
-    if (p.direction === "OUT") {
+    // If nothing armed yet, arm this one (regardless of direction)
+    if (!pending) {
       setPending({ from: { deviceId: d.id, portName: p.name } });
-    } else if (p.direction === "IN" && pending) {
-      const next = addConnection(graph, pending.from, { deviceId: d.id, portName: p.name });
-      onChange(next);
-      setPending(null); // boom!
+      return;
     }
+  
+    // If same port or same device/port clicked again -> unarm
+    if (pending.from.deviceId === d.id && pending.from.portName === p.name) {
+      setPending(null);
+      return;
+    }
+  
+    // We have two clicks; determine OUT -> IN ordering
+    const firstDev = graph.devices.find(x => x.id === pending.from.deviceId)!;
+    const firstPort = firstDev.ports.find(pp => pp.name === pending.from.portName)!;
+  
+    const secondDev = d;
+    const secondPort = p;
+  
+    let fromEnd: { deviceId: string; portName: string };
+    let toEnd:   { deviceId: string; portName: string };
+  
+    if (firstPort.direction === "OUT" && secondPort.direction === "IN") {
+      fromEnd = { deviceId: firstDev.id, portName: firstPort.name };
+      toEnd   = { deviceId: secondDev.id, portName: secondPort.name };
+    } else if (firstPort.direction === "IN" && secondPort.direction === "OUT") {
+      // reverse
+      fromEnd = { deviceId: secondDev.id, portName: secondPort.name };
+      toEnd   = { deviceId: firstDev.id, portName: firstPort.name };
+    } else {
+      // IN→IN or OUT→OUT is invalid; just re-arm the latest click
+      setPending({ from: { deviceId: d.id, portName: p.name } });
+      return;
+    }
+  
+    const next = addConnection(graph, fromEnd, toEnd);
+    onChange(next);
+    setPending(null);
   }
+
 
   // RESIZE
   const [resizing, setResizing] = useState<null | {
@@ -178,33 +210,42 @@ export function Canvas({
     const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
     const yFor = (idx: number, total: number) =>
       HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
-
-    const pendingFrom =
-      pending && pending.from.deviceId === d.id ? pending.from.portName : null;
-
+  
+    // highlight whichever port is "armed" (first click), regardless of direction
+    const armed =
+      pending &&
+      pending.from &&
+      pending.from.deviceId === d.id
+        ? pending.from.portName
+        : null;
+  
     return (
       <svg
         width={w}
         height={h}
         viewBox={`0 0 ${w} ${h}`}
         className="absolute inset-0"
-        style={{ pointerEvents: "none" }} // re-enable on circles
+        /* IMPORTANT: allow pointer events on the <svg> and control on children */
       >
         {/* INs (left) */}
         {INs.map((p, idx) => {
           const cy = yFor(idx, INs.length);
           const cx = PIN_INSET;
-          const selected = false; // only OUT gets "pending" highlight
+          const selected = armed === p.name;
           return (
-            <g key={p.id} pointerEvents="all" className="cursor-crosshair" onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}>
+            <g
+              key={p.id}
+              className="cursor-crosshair"
+              onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
+            >
               <circle
                 cx={cx}
                 cy={cy}
-                r={5}
+                r={selected ? 6 : 5}
                 fill="#10b981"
-                stroke="white"
+                stroke={selected ? "#34d399" : "white"}
                 strokeWidth={selected ? 3 : 2}
-                opacity={1}
+                style={selected ? { filter: "drop-shadow(0 0 4px rgba(52,211,153,0.9))" } : {}}
               />
               <text
                 x={cx + 9}
@@ -218,22 +259,26 @@ export function Canvas({
             </g>
           );
         })}
-
+  
         {/* OUTs (right) */}
         {OUTs.map((p, idx) => {
           const cy = yFor(idx, OUTs.length);
           const cx = w - PIN_INSET;
-          const selected = pendingFrom === p.name;
+          const selected = armed === p.name;
           return (
-            <g key={p.id} pointerEvents="all" className="cursor-crosshair" onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}>
+            <g
+              key={p.id}
+              className="cursor-crosshair"
+              onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
+            >
               <circle
                 cx={cx}
                 cy={cy}
                 r={selected ? 6 : 5}
-                fill={selected ? "#38bdf8" : "#38bdf8"}
+                fill="#38bdf8"
                 stroke={selected ? "#60a5fa" : "white"}
                 strokeWidth={selected ? 3 : 2}
-                filter={selected ? "drop-shadow(0 0 4px rgba(59,130,246,0.9))" : "none"}
+                style={selected ? { filter: "drop-shadow(0 0 4px rgba(59,130,246,0.9))" } : {}}
               />
               <text
                 x={cx - 9}
@@ -251,6 +296,7 @@ export function Canvas({
       </svg>
     );
   }
+
 
   return (
     <div className="relative w-full h-full select-none" onWheel={onWheel}>
