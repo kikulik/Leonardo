@@ -129,32 +129,35 @@ export function Canvas({
     // If nothing armed yet, arm this one (regardless of direction)
     if (!pending) {
       setPending({ from: { deviceId: d.id, portName: p.name } });
+      // reset ghost cursor start
+      setCursorWorld(null);
       return;
     }
   
-    // If same port or same device/port clicked again -> unarm
+    // If same port or same device/port clicked again -> unarm & clear ghost
     if (pending.from.deviceId === d.id && pending.from.portName === p.name) {
       setPending(null);
+      setCursorWorld(null);
       return;
     }
   
-    // We have two clicks; determine OUT -> IN ordering
-    const firstDev = graph.devices.find(x => x.id === pending.from.deviceId)!;
-    const firstPort = firstDev.ports.find(pp => pp.name === pending.from.portName)!;
+    // Determine OUT -> IN ordering
+    const firstDev = graph.devices.find((x) => x.id === pending.from.deviceId)!;
+    const firstPort = firstDev.ports.find((pp) => pp.name === pending.from.portName)!;
   
     const secondDev = d;
     const secondPort = p;
   
     let fromEnd: { deviceId: string; portName: string };
-    let toEnd:   { deviceId: string; portName: string };
+    let toEnd: { deviceId: string; portName: string };
   
     if (firstPort.direction === "OUT" && secondPort.direction === "IN") {
       fromEnd = { deviceId: firstDev.id, portName: firstPort.name };
-      toEnd   = { deviceId: secondDev.id, portName: secondPort.name };
+      toEnd = { deviceId: secondDev.id, portName: secondPort.name };
     } else if (firstPort.direction === "IN" && secondPort.direction === "OUT") {
       // reverse
       fromEnd = { deviceId: secondDev.id, portName: secondPort.name };
-      toEnd   = { deviceId: firstDev.id, portName: firstPort.name };
+      toEnd = { deviceId: firstDev.id, portName: firstPort.name };
     } else {
       // IN→IN or OUT→OUT is invalid; just re-arm the latest click
       setPending({ from: { deviceId: d.id, portName: p.name } });
@@ -164,7 +167,9 @@ export function Canvas({
     const next = addConnection(graph, fromEnd, toEnd);
     onChange(next);
     setPending(null);
+    setCursorWorld(null);
   }
+
 
 
   // RESIZE
@@ -324,11 +329,20 @@ export function Canvas({
           }
         }}
         onMouseMove={(e) => {
+          // update ghost wire position even when not panning
+          if (pending && wrapRef.current) {
+            const rect = wrapRef.current.getBoundingClientRect();
+            const worldX = (e.clientX - rect.left) / zoom - pan.x;
+            const worldY = (e.clientY - rect.top)  / zoom - pan.y;
+            setCursorWorld({ x: worldX, y: worldY });
+          }
+        
           if (!panning) return;
           const dx = (e.clientX - panning.sx) / zoom;
           const dy = (e.clientY - panning.sy) / zoom;
           onViewChange({ pan: { x: panning.px + dx, y: panning.py + dy } });
         }}
+        
         onMouseUp={() => setPanning(null)}
         onContextMenu={(e) => e.preventDefault()}
         style={{
@@ -348,6 +362,19 @@ export function Canvas({
             const d = `M ${A.x},${A.y} C ${midX},${A.y} ${midX},${B.y} ${B.x},${B.y}`;
             return <path key={c.id} d={d} fill="none" stroke="rgba(56,189,248,0.95)" strokeWidth={2} />;
           })}
+        
+          {/* ghost wire while a port is armed */}
+          {pending && cursorWorld && (() => {
+            const dev = deviceMap.get(pending.from.deviceId);
+            if (!dev) return null;
+            const firstPort = dev.ports.find(pp => pp.name === pending.from.portName);
+            if (!firstPort) return null;
+            const A = portWorldPos(dev, pending.from.portName, firstPort.direction as "IN" | "OUT");
+            const B = cursorWorld;
+            const midX = (A.x + B.x) / 2;
+            const d = `M ${A.x},${A.y} C ${midX},${A.y} ${midX},${B.y} ${B.x},${B.y}`;
+            return <path d={d} fill="none" stroke="rgba(148,163,184,0.9)" strokeDasharray="6 6" strokeWidth={2} />;
+          })()}
         </svg>
 
         {/* devices */}
