@@ -18,5 +18,5 @@ services:
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT}:10201"
+      - "${FRONTEND_PORT}:10201:80"
     restart: unless-stopped
