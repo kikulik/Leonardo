@@ -5,19 +5,21 @@ import { Canvas } from "./components/Canvas";
 import { api } from "./lib/api";
 
 /**
- * Pro UI shell:
- * - Dark gradient background
- * - Left tools sidebar
- * - Center canvas area (renders graph JSON)
- * - Right properties panel (collapsible)
- * - Bottom AI command bar
+ * App shell + graph state:
+ * - Generate via backend
+ * - Select/drag (handled in Canvas)
+ * - Save/Load to localStorage
+ * - Toggle Grid + Reset View (re-auto-layout)
  */
+
+const LS_KEY = "leonardo.graph.v1";
 
 export default function App() {
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [aiPrompt, setAiPrompt] = useState("");
-  const [graph, setGraph] = useState<any>(null); // holds { devices, connections? }
+  const [graph, setGraph] = useState<any>(null); // { devices, connections? }
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showGrid, setShowGrid] = useState(true);
 
   // --- AI run ---
   const handleRunAi = async () => {
@@ -25,13 +27,10 @@ export default function App() {
     if (!prompt) return;
 
     try {
-      // Call backend /generate via Nginx proxy (/api/generate)
-      const result = await api.generate(prompt);
-
+      const result = await api.generate(prompt); // POST /api/generate
       console.log("GENERATE result:", result);
-      setGraph(result); // render on canvas
+      setGraph(result);
       setSelectedId(null);
-
       alert("Generate OK. Check console for JSON.");
     } catch (err: any) {
       console.error(err);
@@ -42,9 +41,7 @@ export default function App() {
   };
 
   // --- Canvas change handler (dragging updates x/y, etc.) ---
-  const handleGraphChange = (next: any) => {
-    setGraph(next);
-  };
+  const handleGraphChange = (next: any) => setGraph(next);
 
   // --- Toolbar actions ---
   let copySeq = 1;
@@ -72,6 +69,43 @@ export default function App() {
     setSelectedId(null);
   };
 
+  const handleSave = () => {
+    if (!graph) {
+      alert("Nothing to save yet.");
+      return;
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify(graph));
+    alert("Saved locally.");
+  };
+
+  const handleLoad = () => {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) {
+      alert("No saved graph found.");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      setGraph(parsed);
+      setSelectedId(null);
+    } catch {
+      alert("Saved data is corrupted.");
+    }
+  };
+
+  const handleToggleGrid = () => setShowGrid((v) => !v);
+
+  // Reset view: drop x/y so Canvas auto-layouts again
+  const handleResetView = () => {
+    if (!graph) return;
+    const devices = graph.devices.map((d: any) => {
+      const { x, y, ...rest } = d;
+      return rest; // remove x/y
+    });
+    setGraph({ ...graph, devices });
+    setSelectedId(null);
+  };
+
   return (
     <div
       className="min-h-screen text-white"
@@ -91,18 +125,14 @@ export default function App() {
             Broadcast Schematic Editor
           </div>
         </div>
-        <div className="text-xs text-slate-300">
-          v0.1 • mock UI (we’ll wire APIs next)
-        </div>
+        <div className="text-xs text-slate-300">v0.1</div>
       </header>
 
       {/* Body */}
       <div className="h-[calc(100vh-56px)] grid grid-cols-[20rem,1fr,22rem]">
         {/* Left tools */}
         <aside className="border-r border-slate-700/60 p-4 overflow-y-auto">
-          <h3 className="text-sm font-semibold text-slate-200 mb-3">
-            Equipment
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mb-3">Equipment</h3>
           <button className="w-full mb-3 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium transition-colors">
             + Add Equipment
           </button>
@@ -126,26 +156,37 @@ export default function App() {
             </button>
           </div>
 
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">
-            Project
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">Project</h3>
           <div className="grid grid-cols-2 gap-2">
-            <button className="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg text-sm">
+            <button
+              className="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg text-sm"
+              onClick={handleSave}
+              disabled={!graph}
+            >
               Save
             </button>
-            <button className="bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded-lg text-sm">
+            <button
+              className="bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded-lg text-sm"
+              onClick={handleLoad}
+            >
               Load
             </button>
           </div>
 
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">
-            View
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">View</h3>
           <div className="space-y-2">
-            <button className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm">
-              Toggle Grid
+            <button
+              className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
+              onClick={handleToggleGrid}
+            >
+              {showGrid ? "Hide Grid" : "Show Grid"}
             </button>
-            <button className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm">
+            <button
+              className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
+              onClick={handleResetView}
+              disabled={!graph}
+              title="Re-layout all devices"
+            >
               Reset View
             </button>
           </div>
@@ -173,6 +214,7 @@ export default function App() {
               selectedId={selectedId}
               onSelect={setSelectedId}
               onChange={handleGraphChange}
+              showGrid={showGrid}
             />
           </div>
         </main>
@@ -198,7 +240,9 @@ export default function App() {
               <div className="text-slate-300 text-sm mb-2">Selection</div>
               <div className="text-slate-400 text-sm">
                 {selectedId ? (
-                  <>Selected: <span className="text-slate-200">{selectedId}</span></>
+                  <>
+                    Selected: <span className="text-slate-200">{selectedId}</span>
+                  </>
                 ) : (
                   <>Nothing selected. Double-click a device to edit.</>
                 )}
