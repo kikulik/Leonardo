@@ -34,13 +34,14 @@ const PORT_FONT = 10;
 const BODY_PAD_TOP = 15;
 const BODY_PAD_BOTTOM = 15;
 
-/** Pin Y inside the BODY (no header in any math) */
+/** Pin Y inside the BODY with even spacing incl. symmetric end margins */
 function pinYLocalBody(bodyH: number, count: number, idx: number): number {
   const innerTop = BODY_PAD_TOP;
   const innerH = Math.max(0, bodyH - (BODY_PAD_TOP + BODY_PAD_BOTTOM));
   if (count <= 1) return innerTop + innerH / 2;
-  const step = innerH / (count - 1);
-  return innerTop + step * idx;
+  // N pins -> N+1 even gaps; place pins at the middle of each interior gap
+  const gap = innerH / (count + 1);
+  return innerTop + gap * (idx + 1);
 }
 
 /** World position for a given port (BODY coordinates only) */
@@ -226,6 +227,9 @@ export function Canvas({
   const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
   const [cursorWorld, setCursorWorld] = useState<null | { x: number; y: number }>(null);
 
+  // Selected connections (for click + delete)
+  const [selectedConnIds, setSelectedConnIds] = useState<Set<string>>(new Set());
+
   function handlePortClick(d: Device, p: Port) {
     if (!pending) {
       setPending({ from: { deviceId: d.id, portName: p.name } });
@@ -261,6 +265,29 @@ export function Canvas({
     setPending(null);
     setCursorWorld(null);
   }
+
+  // ESC to cancel pending + clear selected connections; Delete/Backspace to remove selected connections
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setPending(null);
+        setCursorWorld(null);
+        setSelectedConnIds(new Set());
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedConnIds.size > 0) {
+        const toDelete = new Set(selectedConnIds);
+        const next: GraphState = {
+          ...graph,
+          connections: graph.connections.filter((c) => !toDelete.has(c.id)),
+        };
+        setSelectedConnIds(new Set());
+        onChange(next);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [graph, onChange, selectedConnIds]);
 
   // BODY ports SVG (header is a separate element and irrelevant here)
   function DevicePortsSVG({ d }: { d: Device }) {
@@ -367,7 +394,14 @@ export function Canvas({
           if (e.button === 2 || mode === "pan") {
             setPanning({ sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y });
           } else if (e.button === 0) {
-            if (e.target === wrapRef.current) onClearSelection();
+            if (e.target === wrapRef.current) {
+              onClearSelection();
+              setSelectedConnIds(new Set());
+              if (pending) {
+                setPending(null);
+                setCursorWorld(null);
+              }
+            }
           }
         }}
         onMouseMove={(e) => {
@@ -390,7 +424,12 @@ export function Canvas({
         }}
       >
         {/* Connection overlay — BODY-only math */}
-        <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
+        <svg
+          width="100%"
+          height="100%"
+          className="absolute inset-0"
+          style={{ overflow: "visible", pointerEvents: "none" }}
+        >
           {graph.connections.map((c) => {
             const Adev = deviceMap.get(c.from.deviceId);
             const Bdev = deviceMap.get(c.to.deviceId);
@@ -398,13 +437,30 @@ export function Canvas({
             const A = portWorldPos(Adev, c.from.portName, "OUT");
             const B = portWorldPos(Bdev, c.to.portName, "IN");
             const midX = (A.x + B.x) / 2;
+            const isSelected = selectedConnIds.has(c.id);
             return (
               <path
                 key={c.id}
                 d={`M ${A.x},${A.y} C ${midX},${A.y} ${midX},${B.y} ${B.x},${B.y}`}
                 fill="none"
-                stroke="rgba(56,189,248,0.95)"
-                strokeWidth={2}
+                stroke={isSelected ? "rgba(59,130,246,1)" : "rgba(56,189,248,0.95)"}
+                strokeWidth={isSelected ? 3 : 2}
+                pointerEvents="stroke"
+                className="cursor-pointer"
+                onClick={(e) => {
+                  // allow clicking paths while canvas remains pointerEvents:none by default
+                  e.stopPropagation();
+                  setSelectedConnIds((prev) => {
+                    const next = new Set(prev);
+                    if (e.shiftKey || e.metaKey || e.ctrlKey) {
+                      if (next.has(c.id)) next.delete(c.id); else next.add(c.id);
+                    } else {
+                      next.clear();
+                      next.add(c.id);
+                    }
+                    return next;
+                  });
+                }}
               />
             );
           })}
@@ -424,6 +480,7 @@ export function Canvas({
                 stroke="rgba(148,163,184,0.9)"
                 strokeDasharray="6 6"
                 strokeWidth={2}
+                pointerEvents="none"
               />
             );
           })()}
@@ -493,6 +550,9 @@ export function Canvas({
                   if (!(e.shiftKey || e.metaKey || e.ctrlKey))
                     onToggleSelect(d.id, false);
                   else onToggleSelect(d.id, true);
+
+                  // selecting a device clears connection selection
+                  setSelectedConnIds(new Set());
 
                   setDrag({
                     ids,
