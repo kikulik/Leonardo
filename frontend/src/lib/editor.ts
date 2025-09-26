@@ -167,15 +167,16 @@ export function addDevice(
   const rows = Math.max(inCnt, outCnt);
 
   // Height with explicit top/bottom pads so last pin is comfortably inside
+  // *** FIX: Synced constants with Canvas.tsx and corrected autoH logic ***
   const HEADER = 36;
-  const TOP_PAD = 10;
-  const BOT_PAD = 18;
+  const TOP_PAD = 20;
+  const BOT_PAD = 20;
   const ROW_SP = 24;
-  const autoH =
-    HEADER + TOP_PAD + BOT_PAD + (rows > 1 ? (rows - 1) * ROW_SP : ROW_SP);
+  const minContentHeight = rows > 0 ? (rows - 1) * ROW_SP + 10 : 0;
+  const autoH = HEADER + TOP_PAD + BOT_PAD + minContentHeight;
 
   // Width so left/right labels never overlap
-  const CHAR_W = Math.ceil(10 * 0.6); // PORT_FONT * 0.6
+  const CHAR_W = Math.ceil(10 * 0.7); // PORT_FONT * 0.7 (more realistic)
   const leftLen = normPorts
     .filter((p) => p.direction === "IN")
     .reduce((m, p) => Math.max(m, (p.name || "").length), 0);
@@ -189,7 +190,6 @@ export function addDevice(
     PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
   );
 
-  // *** Fixed spread syntax here ***
   let draft: GraphState = { ...state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
