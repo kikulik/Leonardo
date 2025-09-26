@@ -148,49 +148,39 @@ export function addDevice(
   }
 ): GraphState {
   const {
-    type,
-    count = 1,
-    x = 80,
-    y = 80,
-    w = 160,
+    type, count = 1, x = 80, y = 80,
+    w,
     h,
     color = "#334155",
     customNameBase,
     defaultPorts = [],
-    manufacturer,
-    model,
+    manufacturer, model,
   } = payload;
 
   const normPorts = normalizePorts(defaultPorts);
-  const inCnt = normPorts.filter((p) => p.direction === "IN").length;
-  const outCnt = normPorts.filter((p) => p.direction === "OUT").length;
-  const rows = Math.max(inCnt, outCnt);
+  const INs  = normPorts.filter(p => p.direction === "IN");
+  const OUTs = normPorts.filter(p => p.direction === "OUT");
+  const rows = Math.max(INs.length, OUTs.length);
 
-  // Height with explicit top/bottom pads so last pin is comfortably inside
-  // *** FIX: Synced constants with Canvas.tsx and corrected autoH logic ***
-  const HEADER = 36;
-  const TOP_PAD = 20;
-  const BOT_PAD = 20;
+  // --- same sizing logic as Canvas ---
+  const HEADER_H = 36;
+  const BODY_PAD_TOP = 15;
+  const BODY_PAD_BOTTOM = 15;
   const ROW_SP = 24;
-  const minContentHeight = rows > 0 ? (rows - 1) * ROW_SP + 10 : 0;
-  const autoH = HEADER + TOP_PAD + BOT_PAD + minContentHeight;
 
-  // Width so left/right labels never overlap
-  const CHAR_W = Math.ceil(10 * 0.7); // PORT_FONT * 0.7 (more realistic)
-  const leftLen = normPorts
-    .filter((p) => p.direction === "IN")
-    .reduce((m, p) => Math.max(m, (p.name || "").length), 0);
-  const rightLen = normPorts
-    .filter((p) => p.direction === "OUT")
-    .reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+  const innerH = (rows + 1) * ROW_SP;
+  const autoH = Math.max(80, HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + innerH);
+
+  const CHAR_W = Math.ceil(10 * 0.6);
+  const leftLen  = INs.reduce((m,p) => Math.max(m, (p.name || "").length), 0);
+  const rightLen = OUTs.reduce((m,p) => Math.max(m, (p.name || "").length), 0);
   const MIDDLE_GAP = 24;
-  const PIN_AND_TEXT = 2 * (7 + 9); // PIN_INSET + text offset on both sides
-  const autoW = Math.max(
-    160,
-    PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
-  );
+  const PIN_INSET = 7;
+  const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
+  const autoW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
+  // -----------------------------------
 
-  let draft: GraphState = { ...state };
+  let draft = { ...state };
   for (let i = 0; i < count; i++) {
     const id = nextDeviceIdForType(draft, type);
     draft = {
@@ -202,8 +192,8 @@ export function addDevice(
           type,
           x: x + i * 40,
           y: y + i * 40,
-          w: Math.max(w, autoW),
-          h: Math.max(h ?? 0, autoH, 80),
+          w: Math.max(w ?? 0, autoW),
+          h: Math.max(h ?? 0, autoH),
           color,
           customName: customNameBase ? `${customNameBase} ${i + 1}` : undefined,
           manufacturer,
