@@ -20,6 +20,7 @@ type Props = {
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
   onChange?: (next: Graph) => void; // fired when positions change via drag
+  showGrid?: boolean;               // show/hide background grid
 };
 
 const BOX_W = 160;
@@ -28,7 +29,13 @@ const GAP_X = 40;
 const GAP_Y = 40;
 const COLS = 4;
 
-export function Canvas({ graph, selectedId, onSelect, onChange }: Props) {
+export function Canvas({
+  graph,
+  selectedId,
+  onSelect,
+  onChange,
+  showGrid = true,
+}: Props) {
   const devices = graph?.devices ?? [];
   const deviceMap = useMemo(
     () => new Map(devices.map((d) => [d.id, d])),
@@ -75,7 +82,13 @@ export function Canvas({ graph, selectedId, onSelect, onChange }: Props) {
       const dy = e.clientY - drag.startY;
 
       const nextDevices = graph.devices.map((d) =>
-        d.id === drag.id ? { ...d, x: Math.max(0, drag.origX + dx), y: Math.max(0, drag.origY + dy) } : d
+        d.id === drag.id
+          ? {
+              ...d,
+              x: Math.max(0, drag.origX + dx),
+              y: Math.max(0, drag.origY + dy),
+            }
+          : d
       );
       onChange({ ...graph, devices: nextDevices });
     }
@@ -100,27 +113,47 @@ export function Canvas({ graph, selectedId, onSelect, onChange }: Props) {
   return (
     <div
       ref={wrapRef}
-      onMouseDown={() => { /* focus container for future hotkeys */ }}
+      onMouseDown={() => {
+        /* reserve for keyboard focus later */
+      }}
       onClick={onBackgroundClick}
       className="m-4 h-[calc(100%-2rem)] rounded-2xl border border-slate-700 bg-slate-900/40 relative overflow-auto"
     >
       <div style={{ width, height, position: "relative" }}>
         {/* grid */}
-        <svg width={width} height={height} className="absolute inset-0">
-          <defs>
-            <pattern id="minor-grid" width="24" height="24" patternUnits="userSpaceOnUse">
-              <path d="M 24 0 L 0 0 0 24" fill="none" stroke="rgba(148,163,184,0.12)" strokeWidth="1" />
-            </pattern>
-          </defs>
-        </svg>
-        <div className="absolute inset-0" style={{ background: "url(#)" }}>
-          <svg width={width} height={height} className="absolute inset-0">
-            <rect width="100%" height="100%" fill="url(#minor-grid)" />
-          </svg>
-        </div>
+        {showGrid && (
+          <>
+            <svg width={width} height={height} className="absolute inset-0">
+              <defs>
+                <pattern
+                  id="minor-grid"
+                  width="24"
+                  height="24"
+                  patternUnits="userSpaceOnUse"
+                >
+                  <path
+                    d="M 24 0 L 0 0 0 24"
+                    fill="none"
+                    stroke="rgba(148,163,184,0.12)"
+                    strokeWidth="1"
+                  />
+                </pattern>
+              </defs>
+            </svg>
+            <div className="absolute inset-0" style={{ background: "url(#)" }}>
+              <svg width={width} height={height} className="absolute inset-0">
+                <rect width="100%" height="100%" fill="url(#minor-grid)" />
+              </svg>
+            </div>
+          </>
+        )}
 
         {/* connections */}
-        <svg width={width} height={height} className="absolute inset-0 pointer-events-none">
+        <svg
+          width={width}
+          height={height}
+          className="absolute inset-0 pointer-events-none"
+        >
           {(graph?.connections ?? []).map((c, i) => {
             const a = deviceMap.get(c.from.deviceId);
             const b = deviceMap.get(c.to.deviceId);
@@ -147,9 +180,19 @@ export function Canvas({ graph, selectedId, onSelect, onChange }: Props) {
           return (
             <div
               key={d.id}
-              style={{ left: d.x, top: d.y, width: BOX_W, height: BOX_H, cursor: "grab" }}
+              style={{
+                left: d.x,
+                top: d.y,
+                width: BOX_W,
+                height: BOX_H,
+                cursor: "grab",
+              }}
               className={`absolute rounded-xl border shadow-sm transition-all
-                ${isSel ? "border-blue-400 ring-2 ring-blue-400/40" : "border-slate-600"}
+                ${
+                  isSel
+                    ? "border-blue-400 ring-2 ring-blue-400/40"
+                    : "border-slate-600"
+                }
                 bg-slate-800/80 hover:shadow-md select-none`}
               onMouseDown={(e) => {
                 // start drag
@@ -169,8 +212,12 @@ export function Canvas({ graph, selectedId, onSelect, onChange }: Props) {
                 // future: open properties editor
               }}
             >
-              <div className="px-3 pt-2 text-sm font-medium text-slate-100">{d.id}</div>
-              <div className="px-3 text-xs text-slate-400">{d.role ?? "device"}</div>
+              <div className="px-3 pt-2 text-sm font-medium text-slate-100">
+                {d.id}
+              </div>
+              <div className="px-3 text-xs text-slate-400">
+                {d.role ?? "device"}
+              </div>
             </div>
           );
         })}
