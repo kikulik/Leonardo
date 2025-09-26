@@ -18,28 +18,33 @@ type Props = {
   pan: { x: number; y: number };
   onViewChange: (v: { zoom?: number; pan?: { x: number; y: number } }) => void;
 
-  // NEW: snap toggle
   snapEnabled?: boolean;
   gridSize?: number;
 };
 
 const BOX_W = 160;
 const BOX_H = 80;
+const HEADER_H = 24; // ← ports live below this; use it for precise Y
 
 // Port endpoint in WORLD coordinates (unscaled/untranslated)
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const w = device.w ?? BOX_W;
   const h = device.h ?? BOX_H;
-  const left = (device.ports ?? []).filter((p) => p.direction === "IN");
-  const right = (device.ports ?? []).filter((p) => p.direction === "OUT");
+
+  // Ports are rendered inside a content area of height (h - HEADER_H)
+  const contentH = Math.max(0, h - HEADER_H);
+  const inPorts = (device.ports ?? []).filter((p) => p.direction === "IN");
+  const outPorts = (device.ports ?? []).filter((p) => p.direction === "OUT");
+
   if (dir === "IN") {
-    const idx = left.findIndex((p) => p.name === portName);
-    const y = ((idx + 1) * h) / (left.length + 1);
-    return { x: device.x ?? 0, y: (device.y ?? 0) + y };
+    const idx = inPorts.findIndex((p) => p.name === portName);
+    const yWithin = ((idx + 1) * contentH) / (inPorts.length + 1);
+    // Dot sits half outside with CSS (-ml-1). Center it ~4px outside the box.
+    return { x: (device.x ?? 0) - 4, y: (device.y ?? 0) + HEADER_H + yWithin };
   }
-  const idx = right.findIndex((p) => p.name === portName);
-  const y = ((idx + 1) * h) / (right.length + 1);
-  return { x: (device.x ?? 0) + w, y: (device.y ?? 0) + y };
+  const idx = outPorts.findIndex((p) => p.name === portName);
+  const yWithin = ((idx + 1) * contentH) / (outPorts.length + 1);
+  return { x: (device.x ?? 0) + w + 4, y: (device.y ?? 0) + HEADER_H + yWithin };
 }
 
 export function Canvas({
@@ -118,15 +123,11 @@ export function Canvas({
     if (next !== zoom) onViewChange({ zoom: next });
   };
 
-  function worldToView(x: number, y: number) {
-    return { x: (x + pan.x) * zoom, y: (y + pan.y) * zoom };
-  }
-
   // CONNECT (click OUT → click IN)
   const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
 
   function handlePortClick(d: Device, p: Port) {
-    // auto-switch to "connect" mental mode without changing your toolbar's visual selection
+    // auto-connect behavior kicks in when clicking ports
     if (p.direction === "OUT") {
       setPending({ from: { deviceId: d.id, portName: p.name } });
     } else if (p.direction === "IN" && pending) {
@@ -211,7 +212,7 @@ export function Canvas({
           transformOrigin: "0 0",
         }}
       >
-        {/* connections (polylines) */}
+        {/* connections (curves) */}
         <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
           {graph.connections.map((c) => {
             const Adev = deviceMap.get(c.from.deviceId)!;
@@ -222,18 +223,9 @@ export function Canvas({
             const mx = (A.x + B.x) / 2;
             const d = `M ${A.x},${A.y} C ${mx},${A.y} ${mx},${B.y} ${B.x},${B.y}`;
             return (
-              <path key={c.id} d={d} fill="none" stroke="rgba(56,189,248,0.9)" strokeWidth={2} />
+              <path key={c.id} d={d} fill="none" stroke="rgba(56,189,248,0.95)" strokeWidth={2} />
             );
           })}
-          {/* pending rubber-band from OUT to cursor */}
-          {pending && (() => {
-            const Adev = deviceMap.get(pending.from.deviceId)!;
-            if (!Adev) return null;
-            const A = portWorldPos(Adev, pending.from.portName, "OUT");
-            // get mouse relative to world via last known transform: use CSS var (quick hack via pointer)
-            // simpler: follow to pan/zoom layer and let the IN port finalize; no interim line needed
-            return null;
-          })()}
         </svg>
 
         {/* devices */}
@@ -280,13 +272,13 @@ export function Canvas({
             >
               {/* header */}
               <div className="text-[12px] px-2 py-1 flex items-center justify-between"
-                   style={{ background: "rgba(0,0,0,0.15)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                   style={{ height: HEADER_H, lineHeight: "20px", background: "rgba(0,0,0,0.15)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                 <div className="font-medium">{d.customName ?? d.id}</div>
                 <div className="opacity-70">{d.type}</div>
               </div>
 
               {/* ports row */}
-              <div className="relative w-full h-[calc(100%-24px)]">
+              <div className="relative w-full" style={{ height: `calc(100% - ${HEADER_H}px)` }}>
                 {/* left (IN) */}
                 <div className="absolute left-0 top-0 bottom-0 w-3 flex flex-col items-start justify-evenly">
                   {(d.ports ?? []).filter(p => p.direction === "IN").map((p) => (
