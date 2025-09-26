@@ -74,21 +74,14 @@ export default function App() {
     redoStack.current = [];
   };
   const updateGraph = (next: GraphState) =>
-    setGraph((prev) => {
-      pushHistory(prev);
-      return next;
-    });
+    setGraph((prev) => { pushHistory(prev); return next; });
   const onCanvasChange = (next: GraphState) => updateGraph(next);
 
   const toggleSelect = (id: string, additive: boolean) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (additive) {
-        next.has(id) ? next.delete(id) : next.add(id);
-      } else {
-        next.clear();
-        next.add(id);
-      }
+      if (additive) { next.has(id) ? next.delete(id) : next.add(id); }
+      else { next.clear(); next.add(id); }
       return next;
     });
   };
@@ -109,10 +102,8 @@ export default function App() {
         }
         return;
       }
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))
-      ) {
+      if ((e.ctrlKey || e.metaKey) &&
+          (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
         e.preventDefault();
         if (redoStack.current.length) {
           const nxt = redoStack.current.pop()!;
@@ -142,8 +133,7 @@ export default function App() {
       }
     };
     window.addEventListener("keydown", onKey, { capture: true });
-    return () =>
-      window.removeEventListener("keydown", onKey, { capture: true } as any);
+    return () => window.removeEventListener("keydown", onKey, { capture: true } as any);
   }, [graph, selectedIds, clipboard]);
 
   // save/load
@@ -155,28 +145,16 @@ export default function App() {
       const text = await f.text();
       setGraph(withPortIds(JSON.parse(text)));
       setSelectedIds(new Set());
-    } catch {
-      alert("Failed to load file.");
-    } finally {
-      e.currentTarget.value = "";
-    }
+    } catch { alert("Failed to load file."); }
+    finally { e.currentTarget.value = ""; }
   };
 
-  const resetView = () => {
-    setPan({ x: 0, y: 0 });
-    setZoom(1);
-  };
+  const resetView = () => { setPan({ x: 0, y: 0 }); setZoom(1); };
 
-  // add equipment (used by the modal)
+  // add equipment
   const handleAddSubmit = (p: {
-    type: string;
-    quantity: number;
-    customNameBase?: string;
-    manufacturer?: string;
-    model?: string;
-    w?: number;
-    h?: number;
-    color?: string;
+    type: string; quantity: number; customNameBase?: string;
+    manufacturer?: string; model?: string; w?: number; h?: number; color?: string;
     inPorts?: { type: string; quantity: number };
     outPorts?: { type: string; quantity: number };
   }) => {
@@ -194,19 +172,15 @@ export default function App() {
     addPorts("IN", p.inPorts?.type, p.inPorts?.quantity);
     addPorts("OUT", p.outPorts?.type, p.outPorts?.quantity);
 
-    updateGraph(
-      addDevice(graph, {
-        type: p.type,
-        count: p.quantity || 1,
-        customNameBase: p.customNameBase,
-        w: p.w || 160,
-        h: p.h || 80,
-        color: p.color || "#334155",
-        manufacturer: p.manufacturer,
-        model: p.model,
-        defaultPorts: defaults,
-      })
-    );
+    updateGraph(addDevice(graph, {
+      type: p.type,
+      count: p.quantity || 1,
+      customNameBase: p.customNameBase,
+      w: p.w || 160, h: p.h || 80,          // BODY size; header is separate visual
+      color: p.color || "#334155",
+      manufacturer: p.manufacturer, model: p.model,
+      defaultPorts: defaults,
+    }));
     setAddOpen(false);
   };
 
@@ -214,71 +188,51 @@ export default function App() {
   const parseAi = (text: string) => {
     const t = text.trim().toLowerCase();
     const aliases: Record<string, string> = {
-      camera: "camera",
-      cameras: "camera",
+      camera: "camera", cameras: "camera",
       router: "router",
-      "vision mixer": "vision mixer",
-      mixer: "vision mixer",
+      "vision mixer": "vision mixer", mixer: "vision mixer",
       server: "server",
-      "camera control unit": "camera control unit",
-      ccu: "camera control unit",
-      embeder: "embeder",
-      embedder: "embeder",
+      "camera control unit": "camera control unit", ccu: "camera control unit",
+      embeder: "embeder", embedder: "embeder",
       encoder: "encoder",
-      "replay system": "replay system",
-      replay: "replay system",
-      monitor: "monitors",
-      monitors: "monitors",
+      "replay system": "replay system", replay: "replay system",
+      monitor: "monitors", monitors: "monitors",
     };
     let qty = 1;
     const mQty = t.match(/(?:create|add)?\s*(\d+)\s+/);
     if (mQty) qty = Math.max(1, parseInt(mQty[1], 10));
-    for (const k of Object.keys(aliases))
-      if (t.includes(k)) return { type: aliases[k], qty };
+    for (const k of Object.keys(aliases)) if (t.includes(k)) return { type: aliases[k], qty };
     const last = t.split(/\s+/).pop() || "device";
     return { type: aliases[last] || last, qty };
   };
 
   const runAi = () => {
     const { type, qty } = parseAi(aiPrompt);
-    const defaults: Record<string, { in?: number; out?: number; portType?: string }> =
-      {
-        camera: { out: 2, portType: "SDI" },
-        router: { in: 16, out: 16, portType: "SDI" },
-        "vision mixer": { in: 8, out: 4, portType: "SDI" },
-        server: { in: 2, out: 2, portType: "IP" },
-        "camera control unit": { in: 1, out: 2, portType: "SDI" },
-        embeder: { in: 2, out: 2, portType: "AUDIO" },
-        encoder: { in: 2, out: 1, portType: "IP" },
-        "replay system": { in: 6, out: 2, portType: "SDI" },
-        monitors: { in: 2, out: 0, portType: "HDMI" },
-      };
+    const defaults: Record<string, { in?: number; out?: number; portType?: string }> = {
+      camera: { out: 2, portType: "SDI" },
+      router: { in: 16, out: 16, portType: "SDI" },
+      "vision mixer": { in: 8, out: 4, portType: "SDI" },
+      server: { in: 2, out: 2, portType: "IP" },
+      "camera control unit": { in: 1, out: 2, portType: "SDI" },
+      embeder: { in: 2, out: 2, portType: "AUDIO" },
+      encoder: { in: 2, out: 1, portType: "IP" },
+      "replay system": { in: 6, out: 2, portType: "SDI" },
+      monitors: { in: 2, out: 0, portType: "HDMI" },
+    };
     const def = defaults[type] || { out: 1, in: 0, portType: "SDI" };
     const mk = (dir: "IN" | "OUT", n = 0, t = "SDI") =>
-      Array.from({ length: n }, (_, i) => ({
-        name: `${t.toUpperCase()}_${dir}_${i + 1}`,
-        type: t.toUpperCase(),
-        direction: dir,
-      }));
+      Array.from({ length: n }, (_, i) => ({ name: `${t.toUpperCase()}_${dir}_${i + 1}`, type: t.toUpperCase(), direction: dir }));
 
-    updateGraph(
-      addDevice(graph, {
-        type,
-        count: qty,
-        color: "#334155",
-        defaultPorts: [
-          ...mk("IN", def.in || 0, def.portType),
-          ...mk("OUT", def.out || 0, def.portType),
-        ],
-      })
-    );
+    updateGraph(addDevice(graph, {
+      type, count: qty, color: "#334155",
+      defaultPorts: [...mk("IN", def.in || 0, def.portType), ...mk("OUT", def.out || 0, def.portType)],
+    }));
     setAiPrompt("");
   };
 
   // toolbar helpers
   const handleCopy = () => setClipboard(copySelectedDevices(graph, selectedIds));
-  const handlePaste = () =>
-    clipboard.length && updateGraph(pasteDevices(graph, clipboard));
+  const handlePaste = () => clipboard.length && updateGraph(pasteDevices(graph, clipboard));
   const handleDelete = () => {
     if (!selectedIds.size) return;
     updateGraph(deleteSelectedDevices(graph, selectedIds));
@@ -290,16 +244,7 @@ export default function App() {
     setGraph((g) => ({
       ...g,
       devices: g.devices.map((d) =>
-        d.id !== devId
-          ? d
-          : {
-              ...d,
-              ports: d.ports.map((p) =>
-                p.id === portId
-                  ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() }
-                  : p
-              ),
-            }
+        d.id !== devId ? d : { ...d, ports: d.ports.map((p) => (p.id === portId ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p)) }
       ),
     }));
   };
@@ -313,16 +258,7 @@ export default function App() {
               ...d,
               ports: [
                 ...d.ports,
-                {
-                  id:
-                    crypto?.randomUUID?.() ||
-                    Math.random().toString(36).slice(2),
-                  name: `${type.toUpperCase()}_${dir}_${
-                    d.ports.filter((p) => p.direction === dir).length + 1
-                  }`,
-                  type: type.toUpperCase(),
-                  direction: dir,
-                },
+                { id: crypto?.randomUUID?.() || Math.random().toString(36).slice(2), name: `${type.toUpperCase()}_${dir}_${d.ports.filter(p=>p.direction===dir).length + 1}`, type: type.toUpperCase(), direction: dir },
               ],
             }
       ),
@@ -338,23 +274,13 @@ export default function App() {
   };
 
   return (
-    <div
-      className="min-h-screen flex flex-col text-white"
-      style={{
-        background:
-          "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)",
-      }}
-    >
+    <div className="min-h-screen flex flex-col text-white" style={{ background: "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)" }}>
       {/* Top */}
       <header className="h-14 shrink-0 border-b border-slate-700/60 px-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 grid place-items-center font-bold">
-            L
-          </div>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 grid place-items-center font-bold">L</div>
           <div className="font-semibold tracking-wide">Leonardo</div>
-          <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">
-            Broadcast Schematic Editor
-          </div>
+          <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">Broadcast Schematic Editor</div>
         </div>
         <div className="text-xs text-slate-300">v0.9 • autosave</div>
       </header>
@@ -365,134 +291,48 @@ export default function App() {
         <aside className="border-r border-slate-700/60 p-4 overflow-y-auto">
           <h3 className="text-sm font-semibold text-slate-200 mb-3">Tools</h3>
           <div className="grid grid-cols-3 gap-2 mb-2">
-            <button
-              className={`px-3 py-2 rounded-lg text-sm ${
-                mode === "select" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"
-              }`}
-              onClick={() => setMode("select")}
-            >
-              Mouse
-            </button>
-            <button
-              className={`px-3 py-2 rounded-lg text-sm ${
-                mode === "pan" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"
-              }`}
-              onClick={() => setMode("pan")}
-            >
-              Pan
-            </button>
-            <button
-              className={`px-3 py-2 rounded-lg text-sm ${
-                mode === "connect" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"
-              }`}
-              onClick={() => setMode("connect")}
-            >
-              Connect
-            </button>
+            <button className={`px-3 py-2 rounded-lg text-sm ${mode === "select" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"}`} onClick={() => setMode("select")}>Mouse</button>
+            <button className={`px-3 py-2 rounded-lg text-sm ${mode === "pan" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"}`} onClick={() => setMode("pan")}>Pan</button>
+            <button className={`px-3 py-2 rounded-lg text-sm ${mode === "connect" ? "bg-blue-600" : "bg-slate-700 hover:bg-slate-600"}`} onClick={() => setMode("connect")}>Connect</button>
           </div>
 
           <div className="flex items-center justify-between mb-4">
             <label className="text-xs text-slate-300 flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={snapEnabled}
-                onChange={(e) => setSnapEnabled(e.target.checked)}
-              />
+              <input type="checkbox" checked={snapEnabled} onChange={(e) => setSnapEnabled(e.target.checked)} />
               Snap to grid
             </label>
-            <button
-              className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
-              onClick={() => setShowGrid((v) => !v)}
-            >
+            <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => setShowGrid((v) => !v)}>
               {showGrid ? "Hide Grid" : "Show Grid"}
             </button>
           </div>
 
           <h3 className="text-sm font-semibold text-slate-200 mb-3">Equipment</h3>
-          <button
-            className="w-full mb-3 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium"
-            onClick={() => setAddOpen(true)}
-          >
-            + Add Equipment
-          </button>
+          <button className="w-full mb-3 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium" onClick={() => setAddOpen(true)}>+ Add Equipment</button>
 
           <div className="grid grid-cols-3 gap-2">
-            <button
-              className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={handleCopy}
-              disabled={!selectedIds.size}
-            >
-              Copy
-            </button>
-            <button
-              className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={handlePaste}
-              disabled={!clipboard.length}
-            >
-              Paste
-            </button>
-            <button
-              className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm"
-              onClick={handleDelete}
-              disabled={!selectedIds.size}
-            >
-              Delete
-            </button>
+            <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handleCopy} disabled={!selectedIds.size}>Copy</button>
+            <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handlePaste} disabled={!clipboard.length}>Paste</button>
+            <button className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm" onClick={handleDelete} disabled={!selectedIds.size}>Delete</button>
           </div>
 
           <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">Project</h3>
           <div className="grid grid-cols-2 gap-2">
-            <button
-              className="bg-green-700 hover:bg-green-800 px-3 py-2 rounded-lg text-sm"
-              onClick={handleSaveFile}
-            >
-              Save (file)
-            </button>
-            <button
-              className="bg-purple-700 hover:bg-purple-800 px-3 py-2 rounded-lg text-sm"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Load (file)
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={onFileChosen}
-            />
+            <button className="bg-green-700 hover:bg-green-800 px-3 py-2 rounded-lg text-sm" onClick={handleSaveFile}>Save (file)</button>
+            <button className="bg-purple-700 hover:bg-purple-800 px-3 py-2 rounded-lg text-sm" onClick={() => fileInputRef.current?.click()}>Load (file)</button>
+            <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={onFileChosen} />
           </div>
 
           <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">View</h3>
           <div className="space-y-2">
             <div className="grid grid-cols-3 gap-2">
-              <button
-                className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-                onClick={() => setZoom((z) => clampZoom(z * 0.9))}
-              >
-                − Zoom
-              </button>
-              <div className="text-center text-xs text-slate-300 grid place-items-center">
-                {Math.round(zoom * 100)}%
-              </div>
-              <button
-                className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-                onClick={() => setZoom((z) => clampZoom(z * 1.1))}
-              >
-                + Zoom
-              </button>
+              <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={() => setZoom((z) => clampZoom(z * 0.9))}>− Zoom</button>
+              <div className="text-center text-xs text-slate-300 grid place-items-center">{Math.round(zoom * 100)}%</div>
+              <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={() => setZoom((z) => clampZoom(z * 1.1))}>+ Zoom</button>
             </div>
-            <button
-              className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={resetView}
-            >
-              Reset View
-            </button>
+            <button className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={resetView}>Reset View</button>
           </div>
 
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">
-            Device Catalog
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">Device Catalog</h3>
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
             <DeviceCatalog />
           </div>
@@ -518,10 +358,8 @@ export default function App() {
           />
         </main>
 
-        {/* Properties (unchanged UI aside) */}
-        <aside className="border-l border-slate-700/60 p-4 overflow-y-auto">
-          {/* … keep your existing properties panel here … */}
-        </aside>
+        {/* Properties (unchanged, omitted for brevity) */}
+        <aside className="border-l border-slate-700/60 p-4 overflow-y-auto" />
       </div>
 
       {/* AI bar */}
@@ -534,21 +372,12 @@ export default function App() {
             placeholder='Try: "create 5 cameras", "router", "vision mixer 2"'
             className="flex-1 bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 outline-none"
           />
-          <button
-            onClick={runAi}
-            className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium"
-          >
-            Run
-          </button>
+          <button onClick={runAi} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">Run</button>
         </div>
       </div>
 
       {/* modal */}
-      <AddEquipmentModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onSubmit={handleAddSubmit}
-      />
+      <AddEquipmentModal open={addOpen} onClose={() => setAddOpen(false)} onSubmit={handleAddSubmit} />
     </div>
   );
 }
