@@ -23,34 +23,30 @@ type Props = {
 };
 
 const BOX_W = 160;
+// IMPORTANT: `h` and `w` refer to the BODY ONLY (no header).
 const BOX_H = 80;
 
-// Visual-only header. IMPORTANT: header is *not* part of any math below.
-const HEADER_H = 36;
+const HEADER_H = 36; // purely visual cap sitting ABOVE body (separate element)
 
-// Pin geometry
+// Pin geometry (within body only)
 const PIN_INSET = 7;
 const PORT_FONT = 10;
-
-// Body padding (above first / below last pin)
 const BODY_PAD_TOP = 15;
 const BODY_PAD_BOTTOM = 15;
 
-/** Compute Y inside the device for pin #idx in [0..count-1], starting *after* the header. */
-function pinYLocal(boxH: number, count: number, idx: number): number {
-  const bodyTop = HEADER_H;
-  const bodyH = Math.max(0, boxH - HEADER_H);
-  const innerTop = bodyTop + BODY_PAD_TOP;
+/** Pin Y inside the BODY (no header in any math) */
+function pinYLocalBody(bodyH: number, count: number, idx: number): number {
+  const innerTop = BODY_PAD_TOP;
   const innerH = Math.max(0, bodyH - (BODY_PAD_TOP + BODY_PAD_BOTTOM));
   if (count <= 1) return innerTop + innerH / 2;
   const step = innerH / (count - 1);
   return innerTop + step * idx;
 }
 
-/** World position of a port center, using the header-excluded Y. */
+/** World position for a given port (BODY coordinates only) */
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
-  const w = device.w ?? BOX_W;
-  const h = device.h ?? BOX_H;
+  const w = device.w ?? BOX_W;     // BODY width
+  const h = device.h ?? BOX_H;     // BODY height
   const INs = (device.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (device.ports ?? []).filter((p) => p.direction === "OUT");
 
@@ -59,32 +55,29 @@ function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
     if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
     return {
       x: (device.x ?? 0) + PIN_INSET,
-      y: (device.y ?? 0) + pinYLocal(h, INs.length, idx),
+      y: (device.y ?? 0) + pinYLocalBody(h, INs.length, idx),
     };
   } else {
     const idx = OUTs.findIndex((p) => p.name === portName);
     if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
     return {
       x: (device.x ?? 0) + w - PIN_INSET,
-      y: (device.y ?? 0) + pinYLocal(h, OUTs.length, idx),
+      y: (device.y ?? 0) + pinYLocalBody(h, OUTs.length, idx),
     };
   }
 }
 
-/** Minimum safe size that leaves room for ports (header excluded from spacing). */
-function minSizeForDevice(d: Device) {
+/** Minimum BODY size for pins/labels (no header here) */
+function minBodySizeForDevice(d: Device) {
   const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
   const maxPorts = Math.max(INs.length, OUTs.length);
 
   const minPortSpacing = 24;
   const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
-  const minH = Math.max(
-    80,
-    HEADER_H + BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight
-  );
+  const minH = Math.max(80, BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight); // BODY ONLY
 
-  // Width heuristic: labels on both sides + pin insets + center gap
+  // Width: rough text width on both sides + pins + middle gap
   const CHAR_W = Math.ceil(PORT_FONT * 0.6);
   const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
@@ -146,10 +139,12 @@ export function Canvas({
           devices: graph.devices.map((d) => {
             if (!drag.ids.includes(d.id)) return d;
             const start = drag.orig[d.id];
-            return moveDevice({ ...d, x: start.x, y: start.y }, dx, dy, {
-              snapToGrid: snapEnabled,
-              gridSize,
-            });
+            return moveDevice(
+              { ...d, x: start.x, y: start.y },
+              dx,
+              dy,
+              { snapToGrid: snapEnabled, gridSize }
+            );
           }),
         };
         onChange(next);
@@ -170,7 +165,7 @@ export function Canvas({
     };
   }, [drag, graph, onChange, zoom, snapEnabled, gridSize]);
 
-  // Resize
+  // Resize BODY
   const [resizing, setResizing] = useState<null | {
     id: string;
     sx: number;
@@ -191,11 +186,11 @@ export function Canvas({
           ...graph,
           devices: graph.devices.map((d) => {
             if (d.id !== resizing.id) return d;
-            const { minW, minH } = minSizeForDevice(d);
+            const { minW, minH } = minBodySizeForDevice(d);
             return {
               ...d,
               w: Math.max(minW, Math.round(resizing.w + dx)),
-              h: Math.max(minH, Math.round(resizing.h + dy)),
+              h: Math.max(minH, Math.round(resizing.h + dy)), // BODY height
             };
           }),
         };
@@ -219,10 +214,7 @@ export function Canvas({
 
   // Pan / zoom
   const [panning, setPanning] = useState<null | {
-    sx: number;
-    sy: number;
-    px: number;
-    py: number;
+    sx: number; sy: number; px: number; py: number;
   }>(null);
   const onWheel: React.WheelEventHandler = (e) => {
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
@@ -231,12 +223,8 @@ export function Canvas({
   };
 
   // Connect (OUT → IN)
-  const [pending, setPending] = useState<null | {
-    from: { deviceId: string; portName: string };
-  }>(null);
-  const [cursorWorld, setCursorWorld] = useState<null | { x: number; y: number }>(
-    null
-  );
+  const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
+  const [cursorWorld, setCursorWorld] = useState<null | { x: number; y: number }>(null);
 
   function handlePortClick(d: Device, p: Port) {
     if (!pending) {
@@ -274,10 +262,10 @@ export function Canvas({
     setCursorWorld(null);
   }
 
-  // Ports SVG — uses the same math as connections (header excluded).
+  // BODY ports SVG (header is a separate element and irrelevant here)
   function DevicePortsSVG({ d }: { d: Device }) {
-    const w = d.w ?? BOX_W;
-    const h = d.h ?? BOX_H;
+    const w = d.w ?? BOX_W; // BODY width
+    const h = d.h ?? BOX_H; // BODY height
     const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
     const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
     const armed = pending?.from?.deviceId === d.id ? pending.from.portName : null;
@@ -285,7 +273,7 @@ export function Canvas({
     return (
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="absolute inset-0">
         {INs.map((p, idx) => {
-          const cy = pinYLocal(h, INs.length, idx);
+          const cy = pinYLocalBody(h, INs.length, idx);
           const cx = PIN_INSET;
           const selected = armed === p.name;
           return (
@@ -319,7 +307,7 @@ export function Canvas({
           );
         })}
         {OUTs.map((p, idx) => {
-          const cy = pinYLocal(h, OUTs.length, idx);
+          const cy = pinYLocalBody(h, OUTs.length, idx);
           const cx = w - PIN_INSET;
           const selected = armed === p.name;
           return (
@@ -401,7 +389,7 @@ export function Canvas({
           transformOrigin: "0 0",
         }}
       >
-        {/* Connections — use the same portWorldPos (header excluded) */}
+        {/* Connection overlay — BODY-only math */}
         <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
           {graph.connections.map((c) => {
             const Adev = deviceMap.get(c.from.deviceId);
@@ -424,15 +412,9 @@ export function Canvas({
           {pending && cursorWorld && (() => {
             const dev = deviceMap.get(pending.from.deviceId);
             if (!dev) return null;
-            const firstPort = dev.ports.find(
-              (pp) => pp.name === pending.from.portName
-            );
+            const firstPort = dev.ports.find((pp) => pp.name === pending.from.portName);
             if (!firstPort) return null;
-            const A = portWorldPos(
-              dev,
-              pending.from.portName,
-              firstPort.direction as "IN" | "OUT"
-            );
+            const A = portWorldPos(dev, pending.from.portName, firstPort.direction as "IN" | "OUT");
             const B = cursorWorld;
             const midX = (A.x + B.x) / 2;
             return (
@@ -447,92 +429,106 @@ export function Canvas({
           })()}
         </svg>
 
-        {/* Devices */}
+        {/* DEVICES */}
         {devices.map((d) => {
-          const w = d.w ?? BOX_W;
-          const h = d.h ?? BOX_H;
+          const w = d.w ?? BOX_W; // BODY width
+          const h = d.h ?? BOX_H; // BODY height
           const selected = selectedIds.has(d.id);
-          const deviceColor = d.color || "#334155";
+          const bodyColor = d.color || "#334155";
+
+          const x = d.x ?? 0; // BODY top-left X
+          const y = d.y ?? 0; // BODY top-left Y
 
           return (
-            <div
-              key={d.id}
-              className="absolute rounded-xl shadow-lg"
-              style={{
-                left: d.x ?? 0,
-                top: d.y ?? 0,
-                width: w,
-                height: h,
-                background: deviceColor,
-                border: "1px solid rgba(148,163,184,0.35)",
-                boxShadow: selected
-                  ? "0 0 0 2px rgba(59,130,246,0.9), 0 0 18px rgba(59,130,246,0.5)"
-                  : "0 4px 12px rgba(0,0,0,0.25)",
-                transition: "box-shadow 120ms ease",
-              }}
-              onMouseDown={(e) => {
-                if (e.button !== 0) return;
-                const ids =
-                  e.shiftKey || e.metaKey || e.ctrlKey
-                    ? Array.from(new Set([...selectedIds, d.id]))
-                    : [d.id];
-
-                if (!(e.shiftKey || e.metaKey || e.ctrlKey))
-                  onToggleSelect(d.id, false);
-                else onToggleSelect(d.id, true);
-
-                setDrag({
-                  ids,
-                  startX: e.clientX,
-                  startY: e.clientY,
-                  orig: Object.fromEntries(
-                    ids.map((id) => {
-                      const dev = devices.find((x) => x.id === id)!;
-                      return [id, { x: dev.x ?? 0, y: dev.y ?? 0 }];
-                    })
-                  ),
-                });
-              }}
-            >
-              {/* Visual header (fixed height; *not* part of geometry) */}
+            <React.Fragment key={d.id}>
+              {/* HEADER as a completely separate element ABOVE the body */}
               <div
-                className="box-border px-2 border-b border-white/10 flex flex-col justify-center"
-                style={{ background: "rgba(0,0,0,0.15)", height: HEADER_H }}
+                className="absolute rounded-t-xl border border-white/10"
+                style={{
+                  left: x,
+                  top: y - HEADER_H,
+                  width: w,
+                  height: HEADER_H,
+                  background: "rgba(0,0,0,0.22)",
+                  borderBottom: "none",
+                  boxShadow: selected ? "0 0 0 2px rgba(59,130,246,0.8)" : undefined,
+                }}
               >
-                <div className="text-[12px] flex items-center justify-between leading-none">
-                  <div className="font-medium truncate">
-                    {d.customName ?? d.id}
+                <div className="h-full px-2 flex flex-col justify-center">
+                  <div className="text-[12px] flex items-center justify-between leading-none">
+                    <div className="font-medium truncate">{d.customName ?? d.id}</div>
+                    <div className="opacity-70 ml-2 truncate">{d.type}</div>
                   </div>
-                  <div className="opacity-70 ml-2 truncate">{d.type}</div>
-                </div>
-                <div className="text-[10px] opacity-85 mt-1 truncate leading-none">
-                  {(d as any).manufacturer || ""}
-                  {((d as any).manufacturer && (d as any).model) ? " • " : ""}
-                  {(d as any).model || ""}
+                  <div className="text-[10px] opacity-85 mt-1 truncate leading-none">
+                    {(d as any).manufacturer || ""}
+                    {((d as any).manufacturer && (d as any).model) ? " • " : ""}
+                    {(d as any).model || ""}
+                  </div>
                 </div>
               </div>
 
-              {/* Ports (header excluded from all Y math) */}
-              <div className="relative w-full h-full">
-                <DevicePortsSVG d={d} />
-              </div>
-
-              {/* Resize handle */}
+              {/* BODY (ports, geometry) — NO header inside */}
               <div
-                className="absolute w-3 h-3 right-0 bottom-0 translate-x-1 translate-y-1 rounded-sm border border-white/50 bg-white/60 cursor-nwse-resize"
+                className="absolute rounded-b-xl shadow-lg"
+                style={{
+                  left: x,
+                  top: y,
+                  width: w,
+                  height: h,
+                  background: bodyColor,
+                  border: "1px solid rgba(148,163,184,0.35)",
+                  borderTop: "none",
+                  boxShadow: selected
+                    ? "0 0 0 2px rgba(59,130,246,0.9), 0 0 18px rgba(59,130,246,0.5)"
+                    : "0 4px 12px rgba(0,0,0,0.25)",
+                  transition: "box-shadow 120ms ease",
+                }}
                 onMouseDown={(e) => {
-                  e.stopPropagation();
-                  setResizing({
-                    id: d.id,
-                    sx: e.clientX,
-                    sy: e.clientY,
-                    w,
-                    h,
+                  if (e.button !== 0) return;
+                  const ids =
+                    e.shiftKey || e.metaKey || e.ctrlKey
+                      ? Array.from(new Set([...selectedIds, d.id]))
+                      : [d.id];
+
+                  if (!(e.shiftKey || e.metaKey || e.ctrlKey))
+                    onToggleSelect(d.id, false);
+                  else onToggleSelect(d.id, true);
+
+                  setDrag({
+                    ids,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    orig: Object.fromEntries(
+                      ids.map((id) => {
+                        const dev = devices.find((x) => x.id === id)!;
+                        return [id, { x: dev.x ?? 0, y: dev.y ?? 0 }];
+                      })
+                    ),
                   });
                 }}
-                title="Resize"
-              />
-            </div>
+              >
+                {/* Ports (BODY-only SVG) */}
+                <div className="relative w-full h-full">
+                  <DevicePortsSVG d={d} />
+                </div>
+
+                {/* Resize handle (BODY) */}
+                <div
+                  className="absolute w-3 h-3 right-0 bottom-0 translate-x-1 translate-y-1 rounded-sm border border-white/50 bg-white/60 cursor-nwse-resize"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setResizing({
+                      id: d.id,
+                      sx: e.clientX,
+                      sy: e.clientY,
+                      w,
+                      h,
+                    });
+                  }}
+                  title="Resize"
+                />
+              </div>
+            </React.Fragment>
           );
         })}
       </div>
