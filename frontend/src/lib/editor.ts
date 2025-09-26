@@ -3,6 +3,9 @@
 // ---------- Types ----------
 export type PortDirection = "IN" | "OUT";
 export type PortType = "SDI" | "IP" | "HDMI" | "AUDIO" | string;
+export function clampZoom(z: number, min = 0.3, max = 2) {
+  return Math.min(max, Math.max(min, z));
+}
 
 export interface Port {
   name: string;
