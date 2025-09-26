@@ -24,12 +24,7 @@ function isTypingTarget(target: EventTarget | null) {
   const el = target as HTMLElement | null;
   if (!el) return false;
   const tag = (el.tagName || "").toLowerCase();
-  return (
-    tag === "input" ||
-    tag === "textarea" ||
-    tag === "select" ||
-    (el as HTMLElement).isContentEditable === true
-  );
+  return tag === "input" || tag === "textarea" || tag === "select" || (el as HTMLElement).isContentEditable === true;
 }
 
 export default function App() {
@@ -54,17 +49,12 @@ export default function App() {
 
   // load
   useEffect(() => {
-    try {
-      const txt = localStorage.getItem(LS_KEY);
-      if (txt) setGraph(withPortIds(JSON.parse(txt)));
-    } catch {}
+    try { const txt = localStorage.getItem(LS_KEY); if (txt) setGraph(withPortIds(JSON.parse(txt))); } catch {}
   }, []);
 
   // autosave
   useEffect(() => {
-    const id = window.setTimeout(() => {
-      try { localStorage.setItem(LS_KEY, JSON.stringify(graph)); } catch {}
-    }, 250);
+    const id = window.setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(graph)); } catch {} }, 250);
     return () => clearTimeout(id);
   }, [graph]);
 
@@ -73,8 +63,7 @@ export default function App() {
     if (undoStack.current.length > 100) undoStack.current.shift();
     redoStack.current = [];
   };
-  const updateGraph = (next: GraphState) =>
-    setGraph((prev) => { pushHistory(prev); return next; });
+  const updateGraph = (next: GraphState) => setGraph((prev) => { pushHistory(prev); return next; });
   const onCanvasChange = (next: GraphState) => updateGraph(next);
 
   const toggleSelect = (id: string, additive: boolean) => {
@@ -102,8 +91,7 @@ export default function App() {
         }
         return;
       }
-      if ((e.ctrlKey || e.metaKey) &&
-          (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
         e.preventDefault();
         if (redoStack.current.length) {
           const nxt = redoStack.current.pop()!;
@@ -139,8 +127,7 @@ export default function App() {
   // save/load
   const handleSaveFile = () => saveProject(graph, "project.json");
   const onFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
+    const f = e.target.files?.[0]; if (!f) return;
     try {
       const text = await f.text();
       setGraph(withPortIds(JSON.parse(text)));
@@ -162,24 +149,16 @@ export default function App() {
     const addPorts = (direction: "IN" | "OUT", t?: string, qty?: number) => {
       const n = Math.max(0, qty || 0);
       for (let i = 1; i <= n; i++) {
-        defaults.push({
-          name: `${(t || "PORT").toUpperCase()}_${direction}_${i}`,
-          type: (t || "GEN").toUpperCase(),
-          direction,
-        });
+        defaults.push({ name: `${(t || "PORT").toUpperCase()}_${direction}_${i}`, type: (t || "GEN").toUpperCase(), direction });
       }
     };
     addPorts("IN", p.inPorts?.type, p.inPorts?.quantity);
     addPorts("OUT", p.outPorts?.type, p.outPorts?.quantity);
 
     updateGraph(addDevice(graph, {
-      type: p.type,
-      count: p.quantity || 1,
-      customNameBase: p.customNameBase,
-      w: p.w || 160, h: p.h || 80,          // BODY size; header is separate visual
-      color: p.color || "#334155",
-      manufacturer: p.manufacturer, model: p.model,
-      defaultPorts: defaults,
+      type: p.type, count: p.quantity || 1, customNameBase: p.customNameBase,
+      w: p.w || 160, h: p.h || 80, color: p.color || "#334155",
+      manufacturer: p.manufacturer, model: p.model, defaultPorts: defaults,
     }));
     setAddOpen(false);
   };
@@ -233,13 +212,9 @@ export default function App() {
   // toolbar helpers
   const handleCopy = () => setClipboard(copySelectedDevices(graph, selectedIds));
   const handlePaste = () => clipboard.length && updateGraph(pasteDevices(graph, clipboard));
-  const handleDelete = () => {
-    if (!selectedIds.size) return;
-    updateGraph(deleteSelectedDevices(graph, selectedIds));
-    setSelectedIds(new Set());
-  };
+  const handleDelete = () => { if (!selectedIds.size) return; updateGraph(deleteSelectedDevices(graph, selectedIds)); setSelectedIds(new Set()); };
 
-  // port helpers for properties panel (use stable id)
+  // port helpers for properties panel (stable id)
   const updatePortById = (devId: string, portId: string, patch: Partial<Port>) => {
     setGraph((g) => ({
       ...g,
@@ -258,7 +233,12 @@ export default function App() {
               ...d,
               ports: [
                 ...d.ports,
-                { id: crypto?.randomUUID?.() || Math.random().toString(36).slice(2), name: `${type.toUpperCase()}_${dir}_${d.ports.filter(p=>p.direction===dir).length + 1}`, type: type.toUpperCase(), direction: dir },
+                {
+                  id: crypto?.randomUUID?.() || Math.random().toString(36).slice(2),
+                  name: `${type.toUpperCase()}_${dir}_${d.ports.filter((p) => p.direction === dir).length + 1}`,
+                  type: type.toUpperCase(),
+                  direction: dir,
+                },
               ],
             }
       ),
@@ -267,9 +247,7 @@ export default function App() {
   const delPort = (devId: string, portId: string) => {
     setGraph((g) => ({
       ...g,
-      devices: g.devices.map((d) =>
-        d.id !== devId ? d : { ...d, ports: d.ports.filter((p) => p.id !== portId) }
-      ),
+      devices: g.devices.map((d) => (d.id !== devId ? d : { ...d, ports: d.ports.filter((p) => p.id !== portId) })),
     }));
   };
 
@@ -350,16 +328,98 @@ export default function App() {
             showGrid={showGrid}
             zoom={zoom}
             pan={pan}
-            onViewChange={(v) => {
-              if (v.zoom !== undefined) setZoom(v.zoom);
-              if (v.pan !== undefined) setPan(v.pan);
-            }}
+            onViewChange={(v) => { if (v.zoom !== undefined) setZoom(v.zoom); if (v.pan !== undefined) setPan(v.pan); }}
             snapEnabled={snapEnabled}
           />
         </main>
 
-        {/* Properties (unchanged, omitted for brevity) */}
-        <aside className="border-l border-slate-700/60 p-4 overflow-y-auto" />
+        {/* Properties panel — restored */}
+        <aside className="border-l border-slate-700/60 p-4 overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-slate-200">Properties</h3>
+            <button onClick={() => setShowRightPanel((v) => !v)} className="text-slate-300 hover:text-white text-sm">
+              {showRightPanel ? "Hide" : "Show"}
+            </button>
+          </div>
+
+          {showRightPanel && (
+            <div className="space-y-3">
+              {selectedIds.size === 0 ? (
+                <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 text-slate-400 text-sm">
+                  Nothing selected. Ctrl/Cmd-click to multi-select. Use the Connect tool to link ports.
+                </div>
+              ) : (
+                Array.from(selectedIds).map((id) => {
+                  const d = graph.devices.find((x) => x.id === id)!;
+                  const update = (patch: Partial<Device>) =>
+                    setGraph((g) => ({ ...g, devices: g.devices.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+
+                  return (
+                    <div key={id} className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                      <div className="text-slate-300 text-sm mb-1">{d.id}</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-slate-400">Type</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={d.type ?? ""} onChange={(e) => update({ type: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Color</label>
+                          <input type="color" className="w-full h-9 mt-1 bg-slate-800 border border-slate-700 rounded" value={d.color || "#334155"} onChange={(e) => update({ color: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Manufacturer</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={(d as any).manufacturer ?? ""} onChange={(e) => update({ manufacturer: e.target.value } as any)} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Model</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={(d as any).model ?? ""} onChange={(e) => update({ model: e.target.value } as any)} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Width (body)</label>
+                          <input type="number" min={80} className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={d.w ?? 160} onChange={(e) => update({ w: parseInt(e.target.value || "160", 10) as any })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Height (body)</label>
+                          <input type="number" min={60} className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={d.h ?? 80} onChange={(e) => update({ h: parseInt(e.target.value || "80", 10) as any })} />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between mt-2">
+                        <div className="text-slate-300 text-sm">Ports</div>
+                        <div className="flex gap-2">
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort(id, "IN")}>+ IN</button>
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort(id, "OUT")}>+ OUT</button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {d.ports.map((p) => (
+                          <div key={p.id} className="grid grid-cols-12 gap-2 items-center">
+                            <div className="col-span-4">
+                              <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm" value={p.name} onChange={(e) => updatePortById(id, p.id, { name: e.target.value })} />
+                            </div>
+                            <div className="col-span-3">
+                              <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm" value={p.type} onChange={(e) => updatePortById(id, p.id, { type: e.target.value })} />
+                            </div>
+                            <div className="col-span-3">
+                              <select className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm" value={p.direction} onChange={(e) => updatePortById(id, p.id, { direction: e.target.value as any })}>
+                                <option value="IN">IN (left)</option>
+                                <option value="OUT">OUT (right)</option>
+                              </select>
+                            </div>
+                            <div className="col-span-2 text-right">
+                              <button className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1 rounded" onClick={() => delPort(id, p.id)}>Delete</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </aside>
       </div>
 
       {/* AI bar */}
