@@ -24,7 +24,12 @@ function isTypingTarget(target: EventTarget | null) {
   const el = target as HTMLElement | null;
   if (!el) return false;
   const tag = (el.tagName || "").toLowerCase();
-  return tag === "input" || tag === "textarea" || tag === "select" || (el as HTMLElement).isContentEditable === true;
+  return (
+    tag === "input" ||
+    tag === "textarea" ||
+    tag === "select" ||
+    (el as HTMLElement).isContentEditable === true
+  );
 }
 
 export default function App() {
@@ -92,88 +97,78 @@ export default function App() {
           const prev = undoStack.current.pop()!;
           redoStack.current.push(graph);
           setGraph(prev);
+          setSelectedIds(new Set());
         }
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
         e.preventDefault();
         if (redoStack.current.length) {
-          const next = redoStack.current.pop()!;
+          const nxt = redoStack.current.pop()!;
           undoStack.current.push(graph);
-          setGraph(next);
+          setGraph(nxt);
+          setSelectedIds(new Set());
         }
-      } else if (e.key === "Delete" || e.key === "Backspace") {
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        setClipboard(copySelectedDevices(graph, selectedIds));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        if (!clipboard.length) return;
+        updateGraph(pasteDevices(graph, clipboard));
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIds.size) {
+          e.preventDefault();
           updateGraph(deleteSelectedDevices(graph, selectedIds));
           setSelectedIds(new Set());
         }
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [graph, selectedIds]);
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true } as any);
+  }, [graph, selectedIds, clipboard]);
 
-  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
-
-  const onFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    file.text().then((txt) => {
-      try { setGraph(withPortIds(JSON.parse(txt))); } catch {}
-    });
+  // save/load
+  const handleSaveFile = () => saveProject(graph, "project.json");
+  const onFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      setGraph(withPortIds(JSON.parse(text)));
+      setSelectedIds(new Set());
+    } catch { alert("Failed to load file."); }
+    finally { e.currentTarget.value = ""; }
   };
 
-  // toolbar helpers
-  const handleCopy = () => setClipboard(copySelectedDevices(graph, selectedIds));
-  const handlePaste = () => clipboard.length && updateGraph(pasteDevices(graph, clipboard));
-  const handleDelete = () => {
-    if (!selectedIds.size) return;
-    updateGraph(deleteSelectedDevices(graph, selectedIds));
-    setSelectedIds(new Set());
-  };
+  const resetView = () => { setPan({ x: 0, y: 0 }); setZoom(1); };
 
-  // port helpers for properties panel (use stable id)
-  const updatePortById = (devId: string, portId: string, patch: Partial<Port>) => {
-    setGraph((g) => ({
-      ...g,
-      devices: g.devices.map((d) =>
-        d.id !== devId ? d : { ...d, ports: d.ports.map((p) => (p.id === portId ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p)) }
-      ),
-    }));
-  };
-  const addPort = (devId: string, dir: "IN" | "OUT", type = "SDI") => {
-    setGraph((g) => ({
-      ...g,
-      devices: g.devices.map((d) =>
-        d.id !== devId
-          ? d
-          : {
-              ...d,
-              ports: [
-                ...d.ports,
-                { id: crypto?.randomUUID?.() || Math.random().toString(36).slice(2), name: `${type.toUpperCase()}_${dir}_${d.ports.filter(p=>p.direction===dir).length + 1}`, type: type.toUpperCase(), direction: dir },
-              ],
-            }
-      ),
-    }));
-  };
-  const delPort = (devId: string, portId: string) => {
-    setGraph((g) => ({
-      ...g,
-      devices: g.devices.map((d) =>
-        d.id !== devId ? d : { ...d, ports: d.ports.filter((p) => p.id !== portId) }
-      ),
-    }));
-  };
-
-  // add device from modal
-  const onModalSubmit = (p: {
+  // add equipment
+  const handleAddSubmit = (p: {
     type: string; quantity: number; customNameBase?: string;
     manufacturer?: string; model?: string; w?: number; h?: number; color?: string;
-    inPorts: { type: string; quantity: number };
-    outPorts: { type: string; quantity: number };
+    inPorts?: { type: string; quantity: number };
+    outPorts?: { type: string; quantity: number };
   }) => {
-    const mk = (dir: "IN" | "OUT", n = 0, t = "SDI") =>
-      Array.from({ length: n }, (_, i) => ({ name: `${t.toUpperCase()}_${dir}_${i + 1}`, type: t.toUpperCase(), direction: dir }));
-    const defaults = [...mk("IN", p.inPorts.quantity, p.inPorts.type), ...mk("OUT", p.outPorts.quantity, p.outPorts.type)];
+    const defaults: Partial<Port>[] = [];
+    const addPorts = (direction: "IN" | "OUT", t?: string, qty?: number) => {
+      const n = Math.max(0, qty || 0);
+      for (let i = 1; i <= n; i++) {
+        defaults.push({
+          name: `${(t || "PORT").toUpperCase()}_${direction}_${i}`,
+          type: (t || "GEN").toUpperCase(),
+          direction,
+        });
+      }
+    };
+    addPorts("IN", p.inPorts?.type, p.inPorts?.quantity);
+    addPorts("OUT", p.outPorts?.type, p.outPorts?.quantity);
 
     updateGraph(addDevice(graph, {
       type: p.type,
@@ -187,7 +182,7 @@ export default function App() {
     setAddOpen(false);
   };
 
-  // quick-add from text bar (optional)
+  // quick-add from text bar
   const parseAi = (text: string) => {
     const t = text.trim().toLowerCase();
     const aliases: Record<string, string> = {
@@ -231,6 +226,50 @@ export default function App() {
       defaultPorts: [...mk("IN", def.in || 0, def.portType), ...mk("OUT", def.out || 0, def.portType)],
     }));
     setAiPrompt("");
+  };
+
+  // toolbar helpers
+  const handleCopy = () => setClipboard(copySelectedDevices(graph, selectedIds));
+  const handlePaste = () => clipboard.length && updateGraph(pasteDevices(graph, clipboard));
+  const handleDelete = () => {
+    if (!selectedIds.size) return;
+    updateGraph(deleteSelectedDevices(graph, selectedIds));
+    setSelectedIds(new Set());
+  };
+
+  // port helpers for properties panel (use stable id)
+  const updatePortById = (devId: string, portId: string, patch: Partial<Port>) => {
+    setGraph((g) => ({
+      ...g,
+      devices: g.devices.map((d) =>
+        d.id !== devId ? d : { ...d, ports: d.ports.map((p) => (p.id === portId ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p)) }
+      ),
+    }));
+  };
+  const addPort = (devId: string, dir: "IN" | "OUT", type = "SDI") => {
+    setGraph((g) => ({
+      ...g,
+      devices: g.devices.map((d) =>
+        d.id !== devId
+          ? d
+          : {
+              ...d,
+              ports: [
+                ...d.ports,
+                { id: crypto?.randomUUID?.() || Math.random().toString(36).slice(2), name: `${type.toUpperCase()}_${dir}_${d.ports.filter(p=>p.direction===dir).length + 1}`, type: type.toUpperCase(), direction: dir },
+              ],
+            }
+      ),
+    }));
+  };
+  const delPort = (devId: string, portId: string) => {
+    setGraph((g) => ({
+      ...g,
+      devices: g.devices.map((d) =>
+        d.id !== devId ? d : { ...d, ports: d.ports.filter((p) => p.id !== portId) }
+      ),
+      // note: connections use names; if you delete a port, related connections could be cleaned elsewhere if desired
+    }));
   };
 
   return (
@@ -277,7 +316,7 @@ export default function App() {
 
           <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">Project</h3>
           <div className="grid grid-cols-2 gap-2">
-            <button className="bg-green-700 hover:bg-green-800 px-3 py-2 rounded-lg text-sm" onClick={() => saveProject(graph)}>Save (file)</button>
+            <button className="bg-green-700 hover:bg-green-800 px-3 py-2 rounded-lg text-sm" onClick={handleSaveFile}>Save (file)</button>
             <button className="bg-purple-700 hover:bg-purple-800 px-3 py-2 rounded-lg text-sm" onClick={() => fileInputRef.current?.click()}>Load (file)</button>
             <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={onFileChosen} />
           </div>
@@ -318,8 +357,123 @@ export default function App() {
           />
         </main>
 
-        {/* Properties (trimmed for brevity)… */}
+        {/* Properties */}
+        <aside className="border-l border-slate-700/60 p-4 overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-slate-200">Properties</h3>
+            <button onClick={() => setShowRightPanel((v) => !v)} className="text-slate-300 hover:text-white text-sm">
+              {showRightPanel ? "Hide" : "Show"}
+            </button>
+          </div>
+
+          {showRightPanel && (
+            <div className="space-y-3">
+              {selectedIds.size === 0 ? (
+                <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 text-slate-400 text-sm">
+                  Nothing selected. Ctrl/Cmd-click to multi-select. Use the Connect tool to link ports.
+                </div>
+              ) : (
+                Array.from(selectedIds).map((id) => {
+                  const d = graph.devices.find((x) => x.id === id)!;
+                  const update = (patch: Partial<Device>) =>
+                    setGraph((g) => ({ ...g, devices: g.devices.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+
+                  return (
+                    <div key={id} className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                      <div className="text-slate-300 text-sm mb-1">{d.id}</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-slate-400">Type</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={d.type ?? ""} onChange={(e) => update({ type: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Color</label>
+                          <input type="color" className="w-full h-9 mt-1 bg-slate-800 border border-slate-700 rounded" value={d.color || "#334155"} onChange={(e) => update({ color: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Manufacturer</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={(d as any).manufacturer ?? ""} onChange={(e) => update({ manufacturer: e.target.value } as any)} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Model</label>
+                          <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={(d as any).model ?? ""} onChange={(e) => update({ model: e.target.value } as any)} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Width</label>
+                          <input type="number" min={80} className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={d.w ?? 160} onChange={(e) => update({ w: parseInt(e.target.value || "160", 10) as any })} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-400">Height</label>
+                          <input type="number" min={60} className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1" value={d.h ?? 80} onChange={(e) => update({ h: parseInt(e.target.value || "80", 10) as any })} />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between mt-2">
+                        <div className="text-slate-300 text-sm">Ports</div>
+                        <div className="flex gap-2">
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort(id, "IN")}>+ IN</button>
+                          <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded" onClick={() => addPort(id, "OUT")}>+ OUT</button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {d.ports.map((p) => (
+                          <div key={p.id} className="grid grid-cols-12 gap-2 items-center">
+                            <div className="col-span-4">
+                              <input
+                                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.name}
+                                onChange={(e) => updatePortById(id, p.id, { name: e.target.value })}
+                              />
+                            </div>
+                            <div className="col-span-3">
+                              <input
+                                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.type}
+                                onChange={(e) => updatePortById(id, p.id, { type: e.target.value })}
+                              />
+                            </div>
+                            <div className="col-span-3">
+                              <select
+                                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.direction}
+                                onChange={(e) => updatePortById(id, p.id, { direction: e.target.value as any })}
+                              >
+                                <option value="IN">IN (left)</option>
+                                <option value="OUT">OUT (right)</option>
+                              </select>
+                            </div>
+                            <div className="col-span-2 text-right">
+                              <button className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1 rounded" onClick={() => delPort(id, p.id)}>Delete</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </aside>
       </div>
+
+      {/* AI bar */}
+      <div className="sticky bottom-0 left-0 right-0 bg-black/40 border-t border-slate-700/60 px-4 py-3">
+        <div className="max-w-6xl mx-auto flex items-center gap-2">
+          <input
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && runAi()}
+            placeholder='Try: "create 5 cameras", "router", "vision mixer 2"'
+            className="flex-1 bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 outline-none"
+          />
+          <button onClick={runAi} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">Run</button>
+        </div>
+      </div>
+
+      {/* modal */}
+      <AddEquipmentModal open={addOpen} onClose={() => setAddOpen(false)} onSubmit={handleAddSubmit} />
     </div>
   );
 }
