@@ -3,12 +3,11 @@ import DeviceCatalog from "./components/DeviceCatalog";
 import Chat from "./components/Chat";
 import { Canvas } from "./components/Canvas";
 import { api } from "./lib/api";
+import AddEquipmentModal from "./components/AddEquipmentModal";
 
 import {
   addDevice,
-  addPortsToDevice,
   createConnection,
-  editConnectionIds,
   copySelectedDevices,
   pasteDevices,
   deleteSelectedDevices,
@@ -20,26 +19,25 @@ import {
 } from "./lib/editor";
 
 /**
- * App shell + graph state:
- * - Generate via backend
- * - Select/drag (Canvas)
- * - Save/Load (file download/upload)
- * - Copy/Delete
- * - Grid toggle + Reset View
- * - Pan/Zoom (wheel to zoom, right-drag to pan)
+ * Adds:
+ * - Infinite-looking grid (smooth pan/zoom)
+ * - Add Equipment modal (quantity, name, manufacturer, model, size, IN/OUT ports)
+ * - Properties panel for selected device (edit size/name/manufacturer/model + manage ports)
  */
+
+const LS_KEY = "leonardo.graph.v1";
 
 export default function App() {
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [aiPrompt, setAiPrompt] = useState("");
-  const [graph, setGraph] = useState<GraphState>({
-    devices: [],
-    connections: [],
-  });
+  const [graph, setGraph] = useState<GraphState>({ devices: [], connections: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
 
-  // view (pan/zoom) lives in App so buttons can control it
+  // Add modal
+  const [addOpen, setAddOpen] = useState(false);
+
+  // view (pan/zoom)
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
@@ -53,38 +51,28 @@ export default function App() {
     if (!prompt) return;
 
     try {
-      const result = await api.generate(prompt); // POST /api/generate
-
-      // Try to coerce into our GraphState shape if backend differs slightly
+      const result = await api.generate(prompt);
       const next: GraphState = {
         devices: (result.devices ?? result.nodes ?? []).map((d: any, i: number) => ({
           id: d.id ?? d.name ?? `DEV.${i + 1}`,
           type: d.type ?? d.role ?? "device",
-          x: d.x ?? 0,
-          y: d.y ?? 0,
-          w: d.w ?? 160,
-          h: d.h ?? 80,
-          color: d.color,
+          manufacturer: d.manufacturer,
+          model: d.model,
           customName: d.customName,
+          x: d.x ?? 0, y: d.y ?? 0,
+          w: d.w ?? 160, h: d.h ?? 80,
+          color: d.color,
           ports: d.ports ?? [],
         })),
         connections: (result.connections ?? result.links ?? []).map((c: any, i: number) => ({
           id: c.id ?? `CONN-${String(i + 1).padStart(4, "0")}`,
-          from: {
-            deviceId: c.from?.deviceId ?? c.source?.deviceId ?? c.source ?? "",
-            portName: c.from?.portName ?? c.source?.portName ?? "",
-          },
-          to: {
-            deviceId: c.to?.deviceId ?? c.target?.deviceId ?? c.target ?? "",
-            portName: c.to?.portName ?? c.target?.portName ?? "",
-          },
+          from: { deviceId: c.from?.deviceId ?? c.source ?? "", portName: c.from?.portName ?? "" },
+          to:   { deviceId: c.to?.deviceId ?? c.target ?? "", portName: c.to?.portName ?? "" },
         })),
       };
-
       console.log("GENERATE result (normalized):", next);
       setGraph(next);
       setSelectedId(null);
-
       alert("Generate OK. Check console for JSON.");
     } catch (err: any) {
       console.error(err);
@@ -97,53 +85,104 @@ export default function App() {
   // --- Canvas change handler (dragging updates x/y, etc.) ---
   const handleGraphChange = (next: GraphState) => setGraph(next);
 
+  // --- Add Equipment modal submit ---
+  const handleAddSubmit = (p: {
+    type: string; quantity: number; customNameBase?: string;
+    manufacturer?: string; model?: string; w?: number; h?: number;
+    inPorts?: { type: string; quantity: number };
+    outPorts?: { type: string; quantity: number };
+  }) => {
+    // prepare default ports for each new device
+    const defaults: any[] = [];
+    const addPorts = (kind: "IN" | "OUT", t?: string, qty?: number) => {
+      const n = Math.max(0, qty || 0);
+      for (let i = 1; i <= n; i++) {
+        defaults.push({
+          name: `${(t || "PORT").toUpperCase()}_${kind}_${i}`,
+          type: (t || "GEN").toUpperCase(),
+          direction: kind,
+        });
+      }
+    };
+    addPorts("IN", p.inPorts?.type, p.inPorts?.quantity);
+    addPorts("OUT", p.outPorts?.type, p.outPorts?.quantity);
+
+    setGraph((g) => {
+      let next = addDevice(g, {
+        type: p.type,
+        count: p.quantity || 1,
+        customNameBase: p.customNameBase,
+        w: p.w || 160,
+        h: p.h || 80,
+        defaultPorts: defaults,
+      });
+      // inject manufacturer/model into the newly added tail devices
+      const addedCount = p.quantity || 1;
+      const startIdx = next.devices.length - addedCount;
+      for (let i = startIdx; i < next.devices.length; i++) {
+        next.devices[i] = {
+          ...next.devices[i],
+          manufacturer: p.manufacturer || next.devices[i].manufacturer,
+          model: p.model || next.devices[i].model,
+        } as any;
+      }
+      return { ...next };
+    });
+
+    setAddOpen(false);
+  };
+
   // --- Toolbar actions ---
   const handleCopy = () => {
-    if (!graph || !selectedId) return;
+    if (!selectedId) return;
     const copied = copySelectedDevices(graph, new Set([selectedId]));
     setClipboard(copied);
   };
 
   const handlePaste = () => {
-    if (!graph || clipboard.length === 0) return;
+    if (clipboard.length === 0) return;
     setGraph((g) => pasteDevices(g, clipboard));
   };
 
   const handleDelete = () => {
-    if (!graph || !selectedId) return;
+    if (!selectedId) return;
     setGraph((g) => deleteSelectedDevices(g, new Set([selectedId])));
     setSelectedId(null);
   };
 
-  const handleSave = () => {
-    if (!graph) {
-      alert("Nothing to save yet.");
-      return;
-    }
-    saveProject(graph, "project.json");
+  const handleSaveLocal = () => {
+    localStorage.setItem(LS_KEY, JSON.stringify(graph));
+    alert("Saved to localStorage.");
   };
 
-  const handleLoadClick = () => fileInputRef.current?.click();
-  const handleFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (
-    e
-  ) => {
+  const handleLoadLocal = () => {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return alert("No local save found.");
+    try {
+      setGraph(JSON.parse(raw));
+      setSelectedId(null);
+    } catch {
+      alert("Corrupted local save.");
+    }
+  };
+
+  const handleSaveFile = () => saveProject(graph, "project.json");
+  const handleLoadFileChoose = () => fileInputRef.current?.click();
+  const onFileChosen: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
     try {
-      const loaded = await loadProjectFromFile(f);
-      setGraph(loaded);
+      const text = await f.text();
+      setGraph(JSON.parse(text));
       setSelectedId(null);
-    } catch (err: any) {
-      alert(err?.message || "Failed to load project.");
+    } catch {
+      alert("Failed to load file.");
     } finally {
       e.currentTarget.value = "";
     }
   };
 
-  const handleToggleGrid = () => setShowGrid((v) => !v);
-
   const handleResetView = () => {
-    // drop x/y so Canvas auto-layouts again; also reset pan/zoom
     const devices = graph.devices.map(({ x, y, ...rest }) => rest as any);
     setGraph({ ...graph, devices });
     setSelectedId(null);
@@ -151,188 +190,103 @@ export default function App() {
     setZoom(1);
   };
 
-  // quick helpers to demo editor ops from left panel (optional)
-  const demoAddCameras = () => {
-    setGraph((g) =>
-      addDevice(g, {
-        type: "camera",
-        count: 5,
-        customNameBase: "Camera",
-        defaultPorts: [
-          { name: "SDI_OUT_1", type: "SDI", direction: "OUT" },
-          { name: "CTRL_IN_1", type: "IP", direction: "IN" },
-        ],
-      })
-    );
+  // --- Properties panel handlers (selected device) ---
+  const sel = selectedId ? graph.devices.find((d) => d.id === selectedId) : null;
+
+  const updateSelectedDevice = (patch: Partial<Device>) => {
+    if (!sel) return;
+    setGraph((g) => ({
+      ...g,
+      devices: g.devices.map((d) => (d.id === sel.id ? { ...d, ...patch } : d)),
+    }));
   };
-  const demoConnectFirstTwo = () => {
-    if (graph.devices.length < 2) {
-      alert("Need at least 2 devices for demo connection.");
-      return;
-    }
-    const a = graph.devices[0].id;
-    const b = graph.devices[1].id;
-    setGraph((g) => createConnection(g, { sourceDevice: a, destDevice: b }));
+
+  const addPort = (direction: "IN" | "OUT", type = "SDI") => {
+    if (!sel) return;
+    const existing = sel.ports ?? [];
+    const idx = existing.filter((p) => p.direction === direction).length + 1;
+    const name = `${type.toUpperCase()}_${direction}_${idx}`;
+    const nextPorts = [...existing, { name, type: type.toUpperCase(), direction }];
+    updateSelectedDevice({ ports: nextPorts as any });
+  };
+
+  const deletePort = (portName: string) => {
+    if (!sel) return;
+    const nextPorts = (sel.ports ?? []).filter((p) => p.name !== portName);
+    updateSelectedDevice({ ports: nextPorts as any });
+  };
+
+  const updatePort = (portName: string, patch: Partial<{ name: string; type: string; direction: "IN" | "OUT" }>) => {
+    if (!sel) return;
+    const nextPorts = (sel.ports ?? []).map((p) =>
+      p.name === portName ? { ...p, ...patch, type: (patch.type ?? p.type)?.toUpperCase() } : p
+    );
+    updateSelectedDevice({ ports: nextPorts as any });
   };
 
   return (
     <div
       className="min-h-screen text-white"
-      style={{
-        background:
-          "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)",
-      }}
+      style={{ background: "linear-gradient(135deg, rgb(15,23,42) 0%, rgb(30,41,59) 100%)" }}
     >
       {/* Top bar */}
       <header className="h-14 border-b border-slate-700/60 px-4 flex items-center justify-between backdrop-blur">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 grid place-items-center font-bold">
-            L
-          </div>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 grid place-items-center font-bold">L</div>
           <div className="font-semibold tracking-wide">Leonardo</div>
-          <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">
-            Broadcast Schematic Editor
-          </div>
+          <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">Broadcast Schematic Editor</div>
         </div>
-        <div className="text-xs text-slate-300">v0.2</div>
+        <div className="text-xs text-slate-300">v0.3</div>
       </header>
 
       {/* Body */}
       <div className="h-[calc(100vh-56px)] grid grid-cols-[20rem,1fr,22rem]">
         {/* Left tools */}
         <aside className="border-r border-slate-700/60 p-4 overflow-y-auto">
-          <h3 className="text-sm font-semibold text-slate-200 mb-3">
-            Equipment
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mb-3">Equipment</h3>
           <button
             className="w-full mb-3 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium transition-colors"
-            onClick={demoAddCameras}
+            onClick={() => setAddOpen(true)}
           >
-            + Add 5 Cameras (demo)
+            + Add Equipment
           </button>
 
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={handleCopy}
-              disabled={!selectedId}
-              title={selectedId ? `Copy ${selectedId}` : "Select a device first"}
-            >
-              Copy
-            </button>
-            <button
-              className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={handlePaste}
-              disabled={clipboard.length === 0}
-              title={
-                clipboard.length ? "Paste clipboard" : "Copy something first"
-              }
-            >
-              Paste
-            </button>
-            <button
-              className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed col-span-2"
-              onClick={handleDelete}
-              disabled={!selectedId}
-              title={selectedId ? `Delete ${selectedId}` : "Select a device first"}
-            >
-              Delete
-            </button>
+          <div className="grid grid-cols-3 gap-2">
+            <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handleCopy} disabled={!selectedId}>Copy</button>
+            <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handlePaste} disabled={!clipboard.length}>Paste</button>
+            <button className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded-lg text-sm" onClick={handleDelete} disabled={!selectedId}>Delete</button>
           </div>
 
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">
-            Project
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">Project</h3>
           <div className="grid grid-cols-2 gap-2">
-            <button
-              className="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg text-sm"
-              onClick={handleSave}
-            >
-              Save (download)
-            </button>
-            <button
-              className="bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded-lg text-sm"
-              onClick={handleLoadClick}
-            >
-              Load (file)
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={handleFileChosen}
-            />
+            <button className="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg text-sm" onClick={handleSaveLocal}>Save (local)</button>
+            <button className="bg-purple-600 hover:bg-purple-700 px-3 py-2 rounded-lg text-sm" onClick={handleLoadLocal}>Load (local)</button>
+            <button className="bg-green-700 hover:bg-green-800 px-3 py-2 rounded-lg text-sm" onClick={handleSaveFile}>Save (file)</button>
+            <button className="bg-purple-700 hover:bg-purple-800 px-3 py-2 rounded-lg text-sm" onClick={handleLoadFileChoose}>Load (file)</button>
+            <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={onFileChosen} />
           </div>
 
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">
-            View
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">View</h3>
           <div className="space-y-2">
-            <button
-              className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={() => setShowGrid((v) => !v)}
-            >
+            <button className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={() => setShowGrid((v) => !v)}>
               {showGrid ? "Hide Grid" : "Show Grid"}
             </button>
-            <button
-              className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={handleResetView}
-              title="Re-layout devices & reset zoom/pan"
-            >
-              Reset View
-            </button>
             <div className="grid grid-cols-3 gap-2">
-              <button
-                className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-                onClick={() => setZoom((z) => clampZoom(z * 0.9))}
-              >
-                − Zoom
-              </button>
-              <div className="text-center text-xs text-slate-300 grid place-items-center">
-                {Math.round(zoom * 100)}%
-              </div>
-              <button
-                className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-                onClick={() => setZoom((z) => clampZoom(z * 1.1))}
-              >
-                + Zoom
-              </button>
+              <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={() => setZoom((z) => clampZoom(z * 0.9))}>− Zoom</button>
+              <div className="text-center text-xs text-slate-300 grid place-items-center">{Math.round(zoom * 100)}%</div>
+              <button className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={() => setZoom((z) => clampZoom(z * 1.1))}>+ Zoom</button>
             </div>
+            <button className="w-full bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm" onClick={handleResetView}>Reset View</button>
           </div>
 
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">
-            Device Catalog
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">Device Catalog</h3>
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
             <DeviceCatalog />
           </div>
 
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">
-            Chat (placeholder)
-          </h3>
+          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-2">Chat</h3>
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
             <Chat />
-          </div>
-
-          <h3 className="text-sm font-semibold text-slate-200 mt-6 mb-3">
-            Demo links
-          </h3>
-          <div className="grid grid-cols-1 gap-2">
-            <button
-              className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={demoConnectFirstTwo}
-            >
-              Connect first two (demo)
-            </button>
-            <button
-              className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-sm"
-              onClick={() =>
-                setGraph((g) => editConnectionIds(g, { match: "CONN-", replace: "LINK-" }))
-              }
-            >
-              Rename connection IDs (CONN- → LINK-)
-            </button>
           </div>
         </aside>
 
@@ -356,35 +310,112 @@ export default function App() {
         </main>
 
         {/* Right properties (collapsible) */}
-        <aside
-          className={`border-l border-slate-700/60 p-4 overflow-y-auto transition-all duration-200 ${
-            showRightPanel ? "opacity-100" : "opacity-0 pointer-events-none"
-          }`}
-        >
+        <aside className="border-l border-slate-700/60 p-4 overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-slate-200">Properties</h3>
-            <button
-              onClick={() => setShowRightPanel((v) => !v)}
-              className="text-slate-300 hover:text-white text-sm"
-            >
+            <button onClick={() => setShowRightPanel((v) => !v)} className="text-slate-300 hover:text-white text-sm">
               {showRightPanel ? "Hide" : "Show"}
             </button>
           </div>
 
-          <div className="space-y-3">
-            <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3">
-              <div className="text-slate-300 text-sm mb-2">Selection</div>
-              <div className="text-slate-400 text-sm">
-                {selectedId ? (
-                  <>
-                    Selected: <span className="text-slate-200">{selectedId}</span>
-                  </>
-                ) : (
-                  <>Nothing selected. Double-click a device to edit.</>
-                )}
-              </div>
+          {showRightPanel && (
+            <div className="space-y-3">
+              {!sel ? (
+                <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 text-slate-400 text-sm">
+                  Nothing selected. Click a device.
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                    <div className="text-slate-300 text-sm mb-1">Device</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs text-slate-400 col-span-2">ID</label>
+                      <div className="col-span-2 text-slate-200 text-sm">{sel.id}</div>
+
+                      <div>
+                        <label className="text-xs text-slate-400">Name</label>
+                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                          value={sel.customName ?? ""} placeholder="Custom name"
+                          onChange={(e) => updateSelectedDevice({ customName: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400">Type</label>
+                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                          value={sel.type ?? ""} onChange={(e) => updateSelectedDevice({ type: e.target.value })} />
+                      </div>
+
+                      <div>
+                        <label className="text-xs text-slate-400">Manufacturer</label>
+                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                          value={(sel as any).manufacturer ?? ""} onChange={(e) => updateSelectedDevice({ manufacturer: e.target.value } as any)} />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400">Model</label>
+                        <input className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                          value={(sel as any).model ?? ""} onChange={(e) => updateSelectedDevice({ model: e.target.value } as any)} />
+                      </div>
+
+                      <div>
+                        <label className="text-xs text-slate-400">Width</label>
+                        <input type="number" min={80}
+                          className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                          value={sel.w ?? 160}
+                          onChange={(e) => updateSelectedDevice({ w: parseInt(e.target.value || "160", 10) as any })} />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400">Height</label>
+                        <input type="number" min={60}
+                          className="w-full mt-1 bg-slate-800 border border-slate-700 rounded px-2 py-1"
+                          value={sel.h ?? 80}
+                          onChange={(e) => updateSelectedDevice({ h: parseInt(e.target.value || "80", 10) as any })} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-slate-300 text-sm">Ports</div>
+                      <div className="flex gap-2">
+                        <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
+                          onClick={() => addPort("IN")}>+ IN</button>
+                        <button className="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded"
+                          onClick={() => addPort("OUT")}>+ OUT</button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {(sel.ports ?? []).map((p) => (
+                        <div key={p.name} className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-4">
+                            <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                              value={p.name}
+                              onChange={(e) => updatePort(p.name, { name: e.target.value })} />
+                          </div>
+                          <div className="col-span-3">
+                            <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                              value={p.type}
+                              onChange={(e) => updatePort(p.name, { type: e.target.value })} />
+                          </div>
+                          <div className="col-span-3">
+                            <select className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                              value={p.direction}
+                              onChange={(e) => updatePort(p.name, { direction: e.target.value as any })}>
+                              <option value="IN">IN (left)</option>
+                              <option value="OUT">OUT (right)</option>
+                            </select>
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <button className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1 rounded"
+                              onClick={() => deletePort(p.name)}>Delete</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
+          )}
         </aside>
       </div>
 
@@ -398,21 +429,16 @@ export default function App() {
             placeholder='Type a command, e.g. "add 5 cameras"'
             className="flex-1 bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 outline-none"
           />
-          <button
-            onClick={handleRunAi}
-            className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium"
-          >
-            Run
-          </button>
-          <button
-            onClick={() => setShowRightPanel((v) => !v)}
-            className="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg"
-            title="Toggle properties"
-          >
-            Panel
-          </button>
+          <button onClick={handleRunAi} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">Run</button>
         </div>
       </div>
+
+      {/* Add Equipment modal */}
+      <AddEquipmentModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onSubmit={handleAddSubmit}
+      />
     </div>
   );
 }
