@@ -34,8 +34,16 @@ function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const h = device.h ?? BOX_H;
   const INs = (device.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (device.ports ?? []).filter((p) => p.direction === "OUT");
-  const yFor = (idx: number, total: number) =>
-    (device.y ?? 0) + HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
+
+  // Add fixed top/bottom padding so the last port never hugs or spills past the box
+  const TOP_PAD = 10;
+  const BOT_PAD = 18;
+  const yArea = Math.max(0, h - HEADER_H - TOP_PAD - BOT_PAD);
+  const yFor = (idx: number, total: number) => {
+    if (total <= 1) return (device.y ?? 0) + HEADER_H + TOP_PAD + yArea / 2;
+    const step = yArea / (total - 1);
+    return (device.y ?? 0) + HEADER_H + TOP_PAD + idx * step;
+  };
 
   if (dir === "IN") {
     const idx = INs.findIndex((p) => p.name === portName);
@@ -81,30 +89,54 @@ export function Canvas({
 
   useEffect(() => {
     function onMove(e: MouseEvent) {
-      if (!drag) return;
-      const dx = (e.clientX - drag.startX) / zoom;
-      const dy = (e.clientY - drag.startY) / zoom;
-      cancelAnimationFrame(drag.raf ?? 0);
+      if (!resizing) return;
+      const dx = (e.clientX - resizing.sx) / zoom;
+      const dy = (e.clientY - resizing.sy) / zoom;
+  
+      // Compute per-device minimums so ports always stay inside & labels never overlap
+      const dev = graph.devices.find((d) => d.id === resizing.id);
+      const INs = (dev?.ports ?? []).filter((p) => p.direction === "IN");
+      const OUTs = (dev?.ports ?? []).filter((p) => p.direction === "OUT");
+      const rows = Math.max(INs.length, OUTs.length);
+  
+      // Width: text on both sides + pins + safe middle gap
+      const CHAR_W = Math.ceil(PORT_FONT * 0.6);
+      const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+      const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
+      const MIDDLE_GAP = 24;
+      const minW = Math.max(
+        120,
+        2 * (PIN_INSET + 9) + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
+      );
+  
+      // Height: fixed top/bottom padding + row spacing so last port never sits on/below the box
+      const TOP_PAD = 10;
+      const BOT_PAD = 18;
+      const ROW_SP = 24;
+      const minH = Math.max(
+        80,
+        HEADER_H + TOP_PAD + BOT_PAD + (rows > 1 ? (rows - 1) * ROW_SP : ROW_SP) // keep single-row roomy
+      );
+  
+      const nw = Math.max(minW, resizing.w + dx);
+      const nh = Math.max(minH, resizing.h + dy);
+  
+      cancelAnimationFrame(resizing.raf ?? 0);
       const raf = requestAnimationFrame(() => {
-        const nextDevices = graph.devices.map((d) =>
-          drag.ids.includes(d.id)
-            ? moveDevice(
-                { ...d, x: drag.orig[d.id].x, y: drag.orig[d.id].y },
-                dx,
-                dy,
-                { snapToGrid: snapEnabled, gridSize }
-              )
-            : d
-        );
-        onChange({ ...graph, devices: nextDevices });
+        onChange({
+          ...graph,
+          devices: graph.devices.map((d) =>
+            d.id === resizing.id ? { ...d, w: nw, h: nh } : d
+          ),
+        });
       });
-      setDrag((d0) => (d0 ? { ...d0, raf } : d0));
+      setResizing((r) => (r ? { ...r, raf } : r));
     }
     function onUp() {
-      if (drag?.raf) cancelAnimationFrame(drag.raf);
-      setDrag(null);
+      if (resizing?.raf) cancelAnimationFrame(resizing.raf);
+      setResizing(null);
     }
-    if (drag) {
+    if (resizing) {
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     }
@@ -112,8 +144,8 @@ export function Canvas({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [drag, graph, onChange, zoom, snapEnabled, gridSize]);
-
+  }, [resizing, graph, onChange, zoom]);
+  
   // PAN / ZOOM
   const [panning, setPanning] = useState<{ sx: number; sy: number; px: number; py: number } | null>(null);
   const onWheel: React.WheelEventHandler = (e) => {
@@ -213,8 +245,16 @@ export function Canvas({
     const h = d.h ?? BOX_H;
     const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
     const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
-    const yFor = (idx: number, total: number) =>
-      HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
+  
+    // Fixed paddings so the first/last pins never sit on the edges
+    const TOP_PAD = 10;
+    const BOT_PAD = 18;
+    const yArea = Math.max(0, h - HEADER_H - TOP_PAD - BOT_PAD);
+    const yFor = (idx: number, total: number) => {
+      if (total <= 1) return HEADER_H + TOP_PAD + yArea / 2;
+      const step = yArea / (total - 1);
+      return HEADER_H + TOP_PAD + idx * step;
+    };
   
     // highlight whichever port is "armed" (first click), regardless of direction
     const armed =
@@ -225,13 +265,7 @@ export function Canvas({
         : null;
   
     return (
-      <svg
-        width={w}
-        height={h}
-        viewBox={`0 0 ${w} ${h}`}
-        className="absolute inset-0"
-        /* IMPORTANT: allow pointer events on the <svg> and control on children */
-      >
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="absolute inset-0">
         {/* INs (left) */}
         {INs.map((p, idx) => {
           const cy = yFor(idx, INs.length);
@@ -241,6 +275,8 @@ export function Canvas({
             <g
               key={p.id}
               className="cursor-crosshair"
+              // BUGFIX: stop the device <div>'s onMouseDown (drag/select) so clicks reach ports
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
             >
               <circle
@@ -252,13 +288,7 @@ export function Canvas({
                 strokeWidth={selected ? 3 : 2}
                 style={selected ? { filter: "drop-shadow(0 0 4px rgba(52,211,153,0.9))" } : {}}
               />
-              <text
-                x={cx + 9}
-                y={cy + 0.5}
-                fontSize={PORT_FONT}
-                fill="#e2e8f0"
-                dominantBaseline="middle"
-              >
+              <text x={cx + 9} y={cy + 0.5} fontSize={PORT_FONT} fill="#e2e8f0" dominantBaseline="middle">
                 {p.name}
               </text>
             </g>
@@ -274,6 +304,7 @@ export function Canvas({
             <g
               key={p.id}
               className="cursor-crosshair"
+              onMouseDown={(e) => e.stopPropagation()} // same fix for right side
               onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
             >
               <circle
@@ -301,7 +332,6 @@ export function Canvas({
       </svg>
     );
   }
-
 
   return (
     <div className="relative w-full h-full select-none" onWheel={onWheel}>
