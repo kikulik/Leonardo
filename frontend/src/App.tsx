@@ -22,13 +22,12 @@ function isTypingTarget(target: EventTarget | null) {
   const el = target as HTMLElement | null;
   if (!el) return false;
   const tag = (el.tagName || "").toLowerCase();
-  const isFormField =
+  return (
     tag === "input" ||
     tag === "textarea" ||
-    (el as HTMLElement).isContentEditable === true ||
-    // allow typing into form controls (select still shouldn’t trigger delete)
-    tag === "select";
-  return isFormField;
+    tag === "select" ||
+    (el as HTMLElement).isContentEditable === true
+  );
 }
 
 export default function App() {
@@ -85,12 +84,11 @@ export default function App() {
   };
   const clearSelection = () => setSelectedIds(new Set());
 
-  // keyboard (guard when typing in inputs)
+  // keyboard (ignore when typing)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTypingTarget(e.target)) return; // <-- IMPORTANT GUARD
+      if (isTypingTarget(e.target)) return;
 
-      // undo
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (undoStack.current.length) {
@@ -101,7 +99,6 @@ export default function App() {
         }
         return;
       }
-      // redo
       if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
         e.preventDefault();
         if (redoStack.current.length) {
@@ -112,20 +109,17 @@ export default function App() {
         }
         return;
       }
-      // copy
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
         e.preventDefault();
         setClipboard(copySelectedDevices(graph, selectedIds));
         return;
       }
-      // paste
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
         e.preventDefault();
         if (!clipboard.length) return;
         updateGraph(pasteDevices(graph, clipboard));
         return;
       }
-      // delete selection
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIds.size) {
           e.preventDefault();
@@ -246,7 +240,7 @@ export default function App() {
           <div className="font-semibold tracking-wide">Leonardo</div>
           <div className="ml-3 px-2 py-0.5 text-xs rounded bg-slate-800/70 border border-slate-700">Broadcast Schematic Editor</div>
         </div>
-        <div className="text-xs text-slate-300">v0.7 • autosave</div>
+        <div className="text-xs text-slate-300">v0.8 • autosave</div>
       </header>
 
       {/* Body */}
@@ -395,16 +389,28 @@ export default function App() {
                       </div>
 
                       <div className="space-y-2">
-                        {(d.ports ?? []).map((p) => (
-                          <div key={p.name} className="grid grid-cols-12 gap-2 items-center">
+                        {(d.ports ?? []).map((p, idx) => (
+                          <div key={`port-${idx}`} className="grid grid-cols-12 gap-2 items-center">
                             <div className="col-span-4">
-                              <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm" value={p.name} onChange={(e) => updPort(p.name, { name: e.target.value })} />
+                              <input
+                                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.name}
+                                onChange={(e) => updPort(p.name, { name: e.target.value })}
+                              />
                             </div>
                             <div className="col-span-3">
-                              <input className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm" value={p.type} onChange={(e) => updPort(p.name, { type: e.target.value })} />
+                              <input
+                                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.type}
+                                onChange={(e) => updPort(p.name, { type: e.target.value })}
+                              />
                             </div>
                             <div className="col-span-3">
-                              <select className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm" value={p.direction} onChange={(e) => updPort(p.name, { direction: e.target.value as any })}>
+                              <select
+                                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm"
+                                value={p.direction}
+                                onChange={(e) => updPort(p.name, { direction: e.target.value as any })}
+                              >
                                 <option value="IN">IN (left)</option>
                                 <option value="OUT">OUT (right)</option>
                               </select>
