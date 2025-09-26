@@ -23,62 +23,70 @@ type Props = {
 };
 
 const BOX_W = 160;
-// BODY ONLY (no header in these numbers)
+// IMPORTANT: `h` and `w` refer to the BODY ONLY (no header).
 const BOX_H = 80;
 
-const HEADER_H = 36; // visual-only cap rendered above body
+const HEADER_H = 36; // purely visual cap sitting ABOVE body (separate element)
 
-// Pin geometry (inside body only)
+// Pin geometry (within body only)
 const PIN_INSET = 7;
 const PORT_FONT = 10;
 const BODY_PAD_TOP = 15;
 const BODY_PAD_BOTTOM = 15;
 
-/** Evenly distribute pins with equal top/bottom margins (no header in math). */
+/** Pin Y inside the BODY (no header in any math) */
 function pinYLocalBody(bodyH: number, count: number, idx: number): number {
   const innerTop = BODY_PAD_TOP;
   const innerH = Math.max(0, bodyH - (BODY_PAD_TOP + BODY_PAD_BOTTOM));
-  if (count <= 0) return innerTop + innerH / 2;
-  const step = innerH / (count + 1);           // equal margins
-  return innerTop + step * (idx + 1);
+  if (count <= 1) return innerTop + innerH / 2;
+  const step = innerH / (count - 1);
+  return innerTop + step * idx;
 }
 
-/** World position for a port (BODY coords only) */
+/** World position for a given port (BODY coordinates only) */
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
-  const w = device.w ?? BOX_W;
-  const h = device.h ?? BOX_H;
+  const w = device.w ?? BOX_W;     // BODY width
+  const h = device.h ?? BOX_H;     // BODY height
   const INs = (device.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (device.ports ?? []).filter((p) => p.direction === "OUT");
 
   if (dir === "IN") {
     const idx = INs.findIndex((p) => p.name === portName);
     if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
-    return { x: (device.x ?? 0) + PIN_INSET, y: (device.y ?? 0) + pinYLocalBody(h, INs.length, idx) };
+    return {
+      x: (device.x ?? 0) + PIN_INSET,
+      y: (device.y ?? 0) + pinYLocalBody(h, INs.length, idx),
+    };
   } else {
     const idx = OUTs.findIndex((p) => p.name === portName);
     if (idx === -1) return { x: device.x ?? 0, y: device.y ?? 0 };
-    return { x: (device.x ?? 0) + w - PIN_INSET, y: (device.y ?? 0) + pinYLocalBody(h, OUTs.length, idx) };
+    return {
+      x: (device.x ?? 0) + w - PIN_INSET,
+      y: (device.y ?? 0) + pinYLocalBody(h, OUTs.length, idx),
+    };
   }
 }
 
-/** Minimum BODY size (no header here) */
+/** Minimum BODY size for pins/labels (no header here) */
 function minBodySizeForDevice(d: Device) {
   const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
   const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
   const maxPorts = Math.max(INs.length, OUTs.length);
 
-  // ensure room for (count+1) spacing
   const minPortSpacing = 24;
-  const minInnerHeight = maxPorts > 0 ? (maxPorts + 1) * minPortSpacing : 20;
-  const minH = Math.max(80, BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight);
+  const minInnerHeight = maxPorts > 1 ? (maxPorts - 1) * minPortSpacing : 20;
+  const minH = Math.max(80, BODY_PAD_TOP + BODY_PAD_BOTTOM + minInnerHeight); // BODY ONLY
 
-  // width rough for labels both sides + pins + middle gap
+  // Width: rough text width on both sides + pins + middle gap
   const CHAR_W = Math.ceil(PORT_FONT * 0.6);
   const leftLen = INs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const rightLen = OUTs.reduce((m, p) => Math.max(m, (p.name || "").length), 0);
   const MIDDLE_GAP = 24;
   const PIN_AND_TEXT = 2 * (PIN_INSET + 9);
-  const minW = Math.max(160, PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP);
+  const minW = Math.max(
+    160,
+    PIN_AND_TEXT + leftLen * CHAR_W + rightLen * CHAR_W + MIDDLE_GAP
+  );
 
   return { minW, minH };
 }
@@ -98,20 +106,12 @@ export function Canvas({
   gridSize = 16,
 }: Props) {
   const devices = graph.devices;
-  const deviceMap = useMemo(() => new Map(devices.map((d) => [d.id, d] as const)), [devices]);
+  const deviceMap = useMemo(
+    () => new Map(devices.map((d) => [d.id, d] as const)),
+    [devices]
+  );
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
-
-  // track wrapper size so connection SVG never clips
-  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    if (!wrapRef.current) return;
-    const el = wrapRef.current;
-    const ro = new ResizeObserver(() => setCanvasSize({ w: el.clientWidth, h: el.clientHeight }));
-    ro.observe(el);
-    setCanvasSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
-  }, []);
 
   // Grid
   const gridCell = Math.max(8, Math.round(24 * zoom));
@@ -139,20 +139,42 @@ export function Canvas({
           devices: graph.devices.map((d) => {
             if (!drag.ids.includes(d.id)) return d;
             const start = drag.orig[d.id];
-            return moveDevice({ ...d, x: start.x, y: start.y }, dx, dy, { snapToGrid: snapEnabled, gridSize });
+            return moveDevice(
+              { ...d, x: start.x, y: start.y },
+              dx,
+              dy,
+              { snapToGrid: snapEnabled, gridSize }
+            );
           }),
         };
         onChange(next);
       });
       setDrag((r) => (r ? { ...r, raf } : r));
     }
-    function onUp() { if (drag?.raf) cancelAnimationFrame(drag.raf); setDrag(null); }
-    if (drag) { window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp); }
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    function onUp() {
+      if (drag?.raf) cancelAnimationFrame(drag.raf);
+      setDrag(null);
+    }
+    if (drag) {
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    }
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
   }, [drag, graph, onChange, zoom, snapEnabled, gridSize]);
 
   // Resize BODY
-  const [resizing, setResizing] = useState<null | { id: string; sx: number; sy: number; w: number; h: number; raf?: number }>(null);
+  const [resizing, setResizing] = useState<null | {
+    id: string;
+    sx: number;
+    sy: number;
+    w: number;
+    h: number;
+    raf?: number;
+  }>(null);
+
   useEffect(() => {
     function onMove(e: MouseEvent) {
       if (!resizing) return;
@@ -165,20 +187,35 @@ export function Canvas({
           devices: graph.devices.map((d) => {
             if (d.id !== resizing.id) return d;
             const { minW, minH } = minBodySizeForDevice(d);
-            return { ...d, w: Math.max(minW, Math.round(resizing.w + dx)), h: Math.max(minH, Math.round(resizing.h + dy)) };
+            return {
+              ...d,
+              w: Math.max(minW, Math.round(resizing.w + dx)),
+              h: Math.max(minH, Math.round(resizing.h + dy)), // BODY height
+            };
           }),
         };
         onChange(next);
       });
       setResizing((r) => (r ? { ...r, raf } : r));
     }
-    function onUp() { if (resizing?.raf) cancelAnimationFrame(resizing.raf); setResizing(null); }
-    if (resizing) { window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp); }
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    function onUp() {
+      if (resizing?.raf) cancelAnimationFrame(resizing.raf);
+      setResizing(null);
+    }
+    if (resizing) {
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    }
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
   }, [resizing, graph, onChange, zoom]);
 
   // Pan / zoom
-  const [panning, setPanning] = useState<null | { sx: number; sy: number; px: number; py: number }>(null);
+  const [panning, setPanning] = useState<null | {
+    sx: number; sy: number; px: number; py: number;
+  }>(null);
   const onWheel: React.WheelEventHandler = (e) => {
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     const next = clampZoom(zoom * factor);
@@ -189,18 +226,10 @@ export function Canvas({
   const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
   const [cursorWorld, setCursorWorld] = useState<null | { x: number; y: number }>(null);
 
-  // client → world coords helper
-  const clientToWorld = (clientX: number, clientY: number) => {
-    if (!wrapRef.current) return { x: 0, y: 0 };
-    const rect = wrapRef.current.getBoundingClientRect();
-    return { x: (clientX - rect.left) / zoom - pan.x, y: (clientY - rect.top) / zoom - pan.y };
-  };
-
-  function handlePortClick(e: React.MouseEvent, d: Device, p: Port) {
+  function handlePortClick(d: Device, p: Port) {
     if (!pending) {
-      // start connect mode and show dashed cable immediately
-      setCursorWorld(clientToWorld(e.clientX, e.clientY));
       setPending({ from: { deviceId: d.id, portName: p.name } });
+      setCursorWorld(null);
       return;
     }
     if (pending.from.deviceId === d.id && pending.from.portName === p.name) {
@@ -211,7 +240,8 @@ export function Canvas({
 
     const aDev = graph.devices.find((x) => x.id === pending.from.deviceId)!;
     const aPort = aDev.ports.find((pp) => pp.name === pending.from.portName)!;
-    const bDev = d; const bPort = p;
+    const bDev = d;
+    const bPort = p;
 
     let fromEnd: { deviceId: string; portName: string };
     let toEnd: { deviceId: string; portName: string };
@@ -223,9 +253,7 @@ export function Canvas({
       fromEnd = { deviceId: bDev.id, portName: bPort.name };
       toEnd = { deviceId: aDev.id, portName: aPort.name };
     } else {
-      // restart from the clicked port on the same side
       setPending({ from: { deviceId: d.id, portName: p.name } });
-      setCursorWorld(clientToWorld(e.clientX, e.clientY));
       return;
     }
 
@@ -234,10 +262,10 @@ export function Canvas({
     setCursorWorld(null);
   }
 
-  // BODY ports SVG
+  // BODY ports SVG (header is a separate element and irrelevant here)
   function DevicePortsSVG({ d }: { d: Device }) {
-    const w = d.w ?? BOX_W;
-    const h = d.h ?? BOX_H;
+    const w = d.w ?? BOX_W; // BODY width
+    const h = d.h ?? BOX_H; // BODY height
     const INs = (d.ports ?? []).filter((p) => p.direction === "IN");
     const OUTs = (d.ports ?? []).filter((p) => p.direction === "OUT");
     const armed = pending?.from?.deviceId === d.id ? pending.from.portName : null;
@@ -249,10 +277,32 @@ export function Canvas({
           const cx = PIN_INSET;
           const selected = armed === p.name;
           return (
-            <g key={p.id} className="cursor-crosshair" onMouseDown={(e) => e.stopPropagation()}
-               onClick={(e) => { e.stopPropagation(); handlePortClick(e, d, p); }}>
-              <circle cx={cx} cy={cy} r={selected ? 6 : 5} fill="#10b981" stroke={selected ? "#34d399" : "white"} strokeWidth={selected ? 3 : 2} />
-              <text x={cx + 9} y={cy + 0.5} fontSize={PORT_FONT} fill="#e2e8f0" dominantBaseline="middle">{p.name}</text>
+            <g
+              key={p.id}
+              className="cursor-crosshair"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePortClick(d, p);
+              }}
+            >
+              <circle
+                cx={cx}
+                cy={cy}
+                r={selected ? 6 : 5}
+                fill="#10b981"
+                stroke={selected ? "#34d399" : "white"}
+                strokeWidth={selected ? 3 : 2}
+              />
+              <text
+                x={cx + 9}
+                y={cy + 0.5}
+                fontSize={PORT_FONT}
+                fill="#e2e8f0"
+                dominantBaseline="middle"
+              >
+                {p.name}
+              </text>
             </g>
           );
         })}
@@ -261,20 +311,39 @@ export function Canvas({
           const cx = w - PIN_INSET;
           const selected = armed === p.name;
           return (
-            <g key={p.id} className="cursor-crosshair" onMouseDown={(e) => e.stopPropagation()}
-               onClick={(e) => { e.stopPropagation(); handlePortClick(e, d, p); }}>
-              <circle cx={cx} cy={cy} r={selected ? 6 : 5} fill="#38bdf8" stroke={selected ? "#60a5fa" : "white"} strokeWidth={selected ? 3 : 2} />
-              <text x={cx - 9} y={cy + 0.5} fontSize={PORT_FONT} fill="#e2e8f0" dominantBaseline="middle" textAnchor="end">{p.name}</text>
+            <g
+              key={p.id}
+              className="cursor-crosshair"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePortClick(d, p);
+              }}
+            >
+              <circle
+                cx={cx}
+                cy={cy}
+                r={selected ? 6 : 5}
+                fill="#38bdf8"
+                stroke={selected ? "#60a5fa" : "white"}
+                strokeWidth={selected ? 3 : 2}
+              />
+              <text
+                x={cx - 9}
+                y={cy + 0.5}
+                fontSize={PORT_FONT}
+                fill="#e2e8f0"
+                dominantBaseline="middle"
+                textAnchor="end"
+              >
+                {p.name}
+              </text>
             </g>
           );
         })}
       </svg>
     );
   }
-
-  // big viewBox so curves aren’t clipped as you pan/zoom
-  const VB_MARGIN = 20000;
-  const vb = `${-VB_MARGIN} ${-VB_MARGIN} ${canvasSize.w + VB_MARGIN * 2} ${canvasSize.h + VB_MARGIN * 2}`;
 
   return (
     <div className="relative w-full h-full select-none" onWheel={onWheel}>
@@ -302,7 +371,12 @@ export function Canvas({
           }
         }}
         onMouseMove={(e) => {
-          if (pending) setCursorWorld(clientToWorld(e.clientX, e.clientY));
+          if (pending && wrapRef.current) {
+            const rect = wrapRef.current.getBoundingClientRect();
+            const worldX = (e.clientX - rect.left) / zoom - pan.x;
+            const worldY = (e.clientY - rect.top) / zoom - pan.y;
+            setCursorWorld({ x: worldX, y: worldY });
+          }
           if (!panning) return;
           const dx = (e.clientX - panning.sx) / zoom;
           const dy = (e.clientY - panning.sy) / zoom;
@@ -310,14 +384,13 @@ export function Canvas({
         }}
         onMouseUp={() => setPanning(null)}
         onContextMenu={(e) => e.preventDefault()}
-        style={{ transform: `translate(${pan.x * zoom}px, ${pan.y * zoom}px) scale(${zoom})`, transformOrigin: "0 0" }}
+        style={{
+          transform: `translate(${pan.x * zoom}px, ${pan.y * zoom}px) scale(${zoom})`,
+          transformOrigin: "0 0",
+        }}
       >
-        {/* Connection overlay */}
-        <svg
-          className="absolute"
-          style={{ left: 0, top: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}
-          viewBox={vb}
-        >
+        {/* Connection overlay — BODY-only math */}
+        <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
           {graph.connections.map((c) => {
             const Adev = deviceMap.get(c.from.deviceId);
             const Bdev = deviceMap.get(c.to.deviceId);
@@ -335,6 +408,7 @@ export function Canvas({
               />
             );
           })}
+
           {pending && cursorWorld && (() => {
             const dev = deviceMap.get(pending.from.deviceId);
             if (!dev) return null;
@@ -357,21 +431,26 @@ export function Canvas({
 
         {/* DEVICES */}
         {devices.map((d) => {
-          const w = d.w ?? BOX_W;
-          const h = d.h ?? BOX_H;
+          const w = d.w ?? BOX_W; // BODY width
+          const h = d.h ?? BOX_H; // BODY height
           const selected = selectedIds.has(d.id);
           const bodyColor = d.color || "#334155";
-          const x = d.x ?? 0;
-          const y = d.y ?? 0;
+
+          const x = d.x ?? 0; // BODY top-left X
+          const y = d.y ?? 0; // BODY top-left Y
 
           return (
             <React.Fragment key={d.id}>
-              {/* header (separate object) */}
+              {/* HEADER as a completely separate element ABOVE the body */}
               <div
                 className="absolute rounded-t-xl border border-white/10"
                 style={{
-                  left: x, top: y - HEADER_H, width: w, height: HEADER_H,
-                  background: "rgba(0,0,0,0.22)", borderBottom: "none",
+                  left: x,
+                  top: y - HEADER_H,
+                  width: w,
+                  height: HEADER_H,
+                  background: "rgba(0,0,0,0.22)",
+                  borderBottom: "none",
                   boxShadow: selected ? "0 0 0 2px rgba(59,130,246,0.8)" : undefined,
                 }}
               >
@@ -381,17 +460,24 @@ export function Canvas({
                     <div className="opacity-70 ml-2 truncate">{d.type}</div>
                   </div>
                   <div className="text-[10px] opacity-85 mt-1 truncate leading-none">
-                    {(d as any).manufacturer || ""}{((d as any).manufacturer && (d as any).model) ? " • " : ""}{(d as any).model || ""}
+                    {(d as any).manufacturer || ""}
+                    {((d as any).manufacturer && (d as any).model) ? " • " : ""}
+                    {(d as any).model || ""}
                   </div>
                 </div>
               </div>
 
-              {/* body */}
+              {/* BODY (ports, geometry) — NO header inside */}
               <div
                 className="absolute rounded-b-xl shadow-lg"
                 style={{
-                  left: x, top: y, width: w, height: h, background: bodyColor,
-                  border: "1px solid rgba(148,163,184,0.35)", borderTop: "none",
+                  left: x,
+                  top: y,
+                  width: w,
+                  height: h,
+                  background: bodyColor,
+                  border: "1px solid rgba(148,163,184,0.35)",
+                  borderTop: "none",
                   boxShadow: selected
                     ? "0 0 0 2px rgba(59,130,246,0.9), 0 0 18px rgba(59,130,246,0.5)"
                     : "0 4px 12px rgba(0,0,0,0.25)",
@@ -399,11 +485,13 @@ export function Canvas({
                 }}
                 onMouseDown={(e) => {
                   if (e.button !== 0) return;
-                  const ids = e.shiftKey || e.metaKey || e.ctrlKey
-                    ? Array.from(new Set([...selectedIds, d.id]))
-                    : [d.id];
+                  const ids =
+                    e.shiftKey || e.metaKey || e.ctrlKey
+                      ? Array.from(new Set([...selectedIds, d.id]))
+                      : [d.id];
 
-                  if (!(e.shiftKey || e.metaKey || e.ctrlKey)) onToggleSelect(d.id, false);
+                  if (!(e.shiftKey || e.metaKey || e.ctrlKey))
+                    onToggleSelect(d.id, false);
                   else onToggleSelect(d.id, true);
 
                   setDrag({
@@ -419,14 +507,24 @@ export function Canvas({
                   });
                 }}
               >
+                {/* Ports (BODY-only SVG) */}
                 <div className="relative w-full h-full">
                   <DevicePortsSVG d={d} />
                 </div>
 
-                {/* resize handle */}
+                {/* Resize handle (BODY) */}
                 <div
                   className="absolute w-3 h-3 right-0 bottom-0 translate-x-1 translate-y-1 rounded-sm border border-white/50 bg-white/60 cursor-nwse-resize"
-                  onMouseDown={(e) => { e.stopPropagation(); setResizing({ id: d.id, sx: e.clientX, sy: e.clientY, w, h }); }}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setResizing({
+                      id: d.id,
+                      sx: e.clientX,
+                      sy: e.clientY,
+                      w,
+                      h,
+                    });
+                  }}
                   title="Resize"
                 />
               </div>
@@ -435,12 +533,15 @@ export function Canvas({
         })}
       </div>
 
-      {/* diagnostics */}
+      {/* Diagnostics */}
       <div className="absolute bottom-2 right-3 text-[11px] text-slate-200 bg-black/40 px-2 py-1 rounded border border-white/10">
-        {devices.length} devices • {graph.connections.length} connections {snapEnabled ? "• snap: ON" : "• snap: OFF"}
+        {devices.length} devices • {graph.connections.length} connections{" "}
+        {snapEnabled ? "• snap: ON" : "• snap: OFF"}
       </div>
+
       <div className="absolute bottom-2 left-3 text-[11px] text-slate-400 bg-black/30 px-2 py-1 rounded">
-        Select/Move: Drag • Pan: Right-drag / Pan tool • Wheel: Zoom • Connect: OUT → IN
+        Select/Move: Drag • Pan: Right-drag / Pan tool • Wheel: Zoom • Connect:
+        OUT → IN
       </div>
     </div>
   );
