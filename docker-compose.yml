@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   backend:
     image: docker.io/kikulik/leonardo-backend:latest   # public image on Docker Hub
