@@ -24,27 +24,30 @@ type Props = {
 
 const BOX_W = 160;
 const BOX_H = 80;
-const HEADER_H = 24; // ← ports live below this; use it for precise Y
+const HEADER_H = 36; // a bit taller to fit manufacturer/model
+const PORT_D = 8; // dot size (px)
+const PORT_R = PORT_D / 2;
 
-// Port endpoint in WORLD coordinates (unscaled/untranslated)
+// Port center in WORLD coords, matching the absolute pin placement below
 function portWorldPos(device: Device, portName: string, dir: "IN" | "OUT") {
   const w = device.w ?? BOX_W;
   const h = device.h ?? BOX_H;
-
-  // Ports are rendered inside a content area of height (h - HEADER_H)
-  const contentH = Math.max(0, h - HEADER_H);
-  const inPorts = (device.ports ?? []).filter((p) => p.direction === "IN");
-  const outPorts = (device.ports ?? []).filter((p) => p.direction === "OUT");
+  const INs = (device.ports ?? []).filter((p) => p.direction === "IN");
+  const OUTs = (device.ports ?? []).filter((p) => p.direction === "OUT");
 
   if (dir === "IN") {
-    const idx = inPorts.findIndex((p) => p.name === portName);
-    const yWithin = ((idx + 1) * contentH) / (inPorts.length + 1);
-    // Dot sits half outside with CSS (-ml-1). Center it ~4px outside the box.
-    return { x: (device.x ?? 0) - 4, y: (device.y ?? 0) + HEADER_H + yWithin };
+    const idx = INs.findIndex((p) => p.name === portName);
+    const y = (device.y ?? 0) + HEADER_H + ((idx + 1) * (h - HEADER_H)) / (INs.length + 1);
+    // Center should sit exactly on the left edge x
+    const x = (device.x ?? 0);
+    return { x, y };
+  } else {
+    const idx = OUTs.findIndex((p) => p.name === portName);
+    const y = (device.y ?? 0) + HEADER_H + ((idx + 1) * (h - HEADER_H)) / (OUTs.length + 1);
+    // Center should sit exactly on the right edge x + w
+    const x = (device.x ?? 0) + w;
+    return { x, y };
   }
-  const idx = outPorts.findIndex((p) => p.name === portName);
-  const yWithin = ((idx + 1) * contentH) / (outPorts.length + 1);
-  return { x: (device.x ?? 0) + w + 4, y: (device.y ?? 0) + HEADER_H + yWithin };
 }
 
 export function Canvas({
@@ -67,7 +70,7 @@ export function Canvas({
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   // GRID overlay (view-space)
-  const gridCell = Math.max(8, Math.round(24 * zoom)); // scale with zoom
+  const gridCell = Math.max(8, Math.round(24 * zoom));
   const gridPosX = ((pan.x % gridCell) + gridCell) % gridCell;
   const gridPosY = ((pan.y % gridCell) + gridCell) % gridCell;
 
@@ -127,7 +130,6 @@ export function Canvas({
   const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
 
   function handlePortClick(d: Device, p: Port) {
-    // auto-connect behavior kicks in when clicking ports
     if (p.direction === "OUT") {
       setPending({ from: { deviceId: d.id, portName: p.name } });
     } else if (p.direction === "IN" && pending) {
@@ -191,11 +193,9 @@ export function Canvas({
         ref={wrapRef}
         className="absolute inset-0"
         onMouseDown={(e) => {
-          // start panning with right-click or Pan tool
           if (e.button === 2 || mode === "pan") {
             setPanning({ sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y });
           } else if (e.button === 0) {
-            // click empty area → clear selection
             if (e.target === wrapRef.current) onClearSelection();
           }
         }}
@@ -212,7 +212,7 @@ export function Canvas({
           transformOrigin: "0 0",
         }}
       >
-        {/* connections (curves) */}
+        {/* connections */}
         <svg width="100%" height="100%" className="absolute inset-0 pointer-events-none">
           {graph.connections.map((c) => {
             const Adev = deviceMap.get(c.from.deviceId)!;
@@ -234,6 +234,12 @@ export function Canvas({
           const h = d.h ?? BOX_H;
           const selected = selectedIds.has(d.id);
           const deviceColor = d.color || "#334155";
+          const INs = (d.ports ?? []).filter(p => p.direction === "IN");
+          const OUTs = (d.ports ?? []).filter(p => p.direction === "OUT");
+
+          // helper to compute the vertical center for index
+          const vCenter = (idx: number, total: number) =>
+            HEADER_H + ((idx + 1) * (h - HEADER_H)) / (total + 1);
 
           return (
             <div
@@ -251,7 +257,6 @@ export function Canvas({
               }}
               onMouseDown={(e) => {
                 if (e.button !== 0) return;
-                // start drag
                 const ids = e.shiftKey || e.metaKey || e.ctrlKey
                   ? Array.from(new Set([...selectedIds, d.id]))
                   : [d.id];
@@ -270,42 +275,58 @@ export function Canvas({
                 });
               }}
             >
-              {/* header */}
-              <div className="text-[12px] px-2 py-1 flex items-center justify-between"
-                   style={{ height: HEADER_H, lineHeight: "20px", background: "rgba(0,0,0,0.15)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                <div className="font-medium">{d.customName ?? d.id}</div>
-                <div className="opacity-70">{d.type}</div>
+              {/* header (taller; now includes manufacturer + model) */}
+              <div className="px-2 py-1.5 border-b border-white/10" style={{ background: "rgba(0,0,0,0.15)", height: HEADER_H }}>
+                <div className="text-[12px] flex items-center justify-between">
+                  <div className="font-medium truncate">{d.customName ?? d.id}</div>
+                  <div className="opacity-70 ml-2 truncate">{d.type}</div>
+                </div>
+                <div className="text-[10px] opacity-85 mt-0.5 truncate">
+                  {(d as any).manufacturer || ""}{((d as any).manufacturer && (d as any).model) ? " • " : ""}{(d as any).model || ""}
+                </div>
               </div>
 
-              {/* ports row */}
+              {/* ports area uses exact math; pins are absolutely positioned */}
               <div className="relative w-full" style={{ height: `calc(100% - ${HEADER_H}px)` }}>
-                {/* left (IN) */}
-                <div className="absolute left-0 top-0 bottom-0 w-3 flex flex-col items-start justify-evenly">
-                  {(d.ports ?? []).filter(p => p.direction === "IN").map((p) => (
+                {/* IN pins (left) */}
+                {INs.map((p, idx) => {
+                  const cy = vCenter(idx, INs.length);
+                  return (
                     <div
                       key={p.name}
-                      className="group cursor-crosshair -ml-1"
-                      onClick={() => handlePortClick(d, p)}
                       title={`${p.type} IN: ${p.name}`}
+                      className="absolute cursor-crosshair"
+                      style={{
+                        left: -PORT_R, // center exactly on left edge
+                        top: cy - PORT_R,
+                        width: PORT_D, height: PORT_D,
+                      }}
+                      onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
                     >
-                      <div className="w-2 h-2 rounded-full bg-emerald-400 border border-emerald-300 shadow-sm group-hover:scale-125 transition-transform" />
+                      <div className="w-full h-full rounded-full border border-emerald-300 bg-emerald-400 shadow-sm" />
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
 
-                {/* right (OUT) */}
-                <div className="absolute right-0 top-0 bottom-0 w-3 flex flex-col items-end justify-evenly">
-                  {(d.ports ?? []).filter(p => p.direction === "OUT").map((p) => (
+                {/* OUT pins (right) */}
+                {OUTs.map((p, idx) => {
+                  const cy = vCenter(idx, OUTs.length);
+                  return (
                     <div
                       key={p.name}
-                      className="group cursor-crosshair -mr-1"
-                      onClick={() => handlePortClick(d, p)}
                       title={`${p.type} OUT: ${p.name}`}
+                      className="absolute cursor-crosshair"
+                      style={{
+                        left: w - PORT_R, // center exactly on right edge
+                        top: cy - PORT_R,
+                        width: PORT_D, height: PORT_D,
+                      }}
+                      onClick={(e) => { e.stopPropagation(); handlePortClick(d, p); }}
                     >
-                      <div className="w-2 h-2 rounded-full bg-sky-400 border border-sky-300 shadow-sm group-hover:scale-125 transition-transform" />
+                      <div className="w-full h-full rounded-full border border-sky-300 bg-sky-400 shadow-sm" />
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
 
               {/* resize handle */}
@@ -324,8 +345,7 @@ export function Canvas({
 
       {/* diagnostics */}
       <div className="absolute bottom-2 right-3 text-[11px] text-slate-200 bg-black/40 px-2 py-1 rounded border border-white/10">
-        {devices.length} devices • {graph.connections.length} connections
-        {snapEnabled ? " • snap: ON" : " • snap: OFF"}
+        {devices.length} devices • {graph.connections.length} connections {snapEnabled ? "• snap: ON" : "• snap: OFF"}
       </div>
 
       {/* hint */}
