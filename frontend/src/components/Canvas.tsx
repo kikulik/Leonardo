@@ -39,7 +39,7 @@ function pinYLocalBody(bodyH: number, count: number, idx: number): number {
   const innerTop = BODY_PAD_TOP;
   const innerH = Math.max(0, bodyH - (BODY_PAD_TOP + BODY_PAD_BOTTOM));
   if (count <= 0) return innerTop + innerH / 2;
-  // classic (count+1) spacing → equal margin at top and bottom
+  // (count+1) spacing → keeps equal top/bottom margins; works for 2 ports too.
   const step = innerH / (count + 1);
   return innerTop + step * (idx + 1);
 }
@@ -115,7 +115,7 @@ export function Canvas({
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // --- NEW: track wrapper size to make connection SVG un-clippable
+  // --- track wrapper size to make connection SVG un-clippable
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   useEffect(() => {
     if (!wrapRef.current) return;
@@ -241,16 +241,16 @@ export function Canvas({
   const [pending, setPending] = useState<null | { from: { deviceId: string; portName: string } }>(null);
   const [cursorWorld, setCursorWorld] = useState<null | { x: number; y: number }>(null);
 
-  // helper to convert client → world
+  // helper: client → world coords
   const clientToWorld = (clientX: number, clientY: number) => {
     if (!wrapRef.current) return { x: 0, y: 0 };
     const rect = wrapRef.current.getBoundingClientRect();
     return { x: (clientX - rect.left) / zoom - pan.x, y: (clientY - rect.top) / zoom - pan.y };
-  };
+    };
 
   function handlePortClick(e: React.MouseEvent, d: Device, p: Port) {
     if (!pending) {
-      // seed cursor so dashed line appears even before moving
+      // seed preview so dashed line appears immediately
       setCursorWorld(clientToWorld(e.clientX, e.clientY));
       setPending({ from: { deviceId: d.id, portName: p.name } });
       return;
@@ -276,6 +276,7 @@ export function Canvas({
       fromEnd = { deviceId: bDev.id, portName: bPort.name };
       toEnd = { deviceId: aDev.id, portName: aPort.name };
     } else {
+      // clicked another same-side port → restart from this one
       setPending({ from: { deviceId: d.id, portName: p.name } });
       setCursorWorld(clientToWorld(e.clientX, e.clientY));
       return;
@@ -399,9 +400,7 @@ export function Canvas({
           }
         }}
         onMouseMove={(e) => {
-          if (pending) {
-            setCursorWorld(clientToWorld(e.clientX, e.clientY));
-          }
+          if (pending) setCursorWorld(clientToWorld(e.clientX, e.clientY));
           if (!panning) return;
           const dx = (e.clientX - panning.sx) / zoom;
           const dy = (e.clientY - panning.sy) / zoom;
