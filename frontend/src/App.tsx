@@ -268,7 +268,7 @@ export default function App() {
       devices: g.devices.map((d) =>
         d.id !== devId ? d : { ...d, ports: d.ports.filter((p) => p.id !== portId) }
       ),
-      // note: connections keep using names; if you delete a port, related connections should be cleaned elsewhere if desired
+      // note: connections use names; if you delete a port, related connections could be cleaned elsewhere if desired
     }));
   };
 
