@@ -1,12 +1,20 @@
 services:
   backend:
-    image: ghcr.io/kikulik/leonardo-backend:${BACKEND_TAG}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        BUILD_ID: ${BUILD_ID}
     ports:
       - "${BACKEND_PORT}:10001"
     restart: unless-stopped
 
   frontend:
-    image: ghcr.io/kikulik/leonardo-frontend:${FRONTEND_TAG}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BUILD_ID: ${BUILD_ID}
     depends_on:
       - backend
     ports:
