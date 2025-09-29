@@ -1,0 +1,13 @@
+services:
+  leonardo-backend:
+    networks:
+      - default
+      - genai_local-genai-network   # <- join GenAI network so DNS "mcp-netbox" works
+    environment:
+      MCP_NETBOX_URL: "http://mcp-netbox:8090/mcp"  # base URL of the MCP server
+      # Optional: if you prefer routing via GenAI backend later, add this too:
+      GENAI_API_BASE: "http://genai-backend:8000"
+
+networks:
+  genai_local-genai-network:
+    external: true
