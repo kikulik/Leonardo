@@ -3,3 +3,4 @@ uvicorn
 python-multipart
 jsonschema
 pydantic
+httpx>=0.27

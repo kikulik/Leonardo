@@ -1,29 +1,39 @@
 services:
-  backend:
+  leonardo-backend:
     build:
-      context: .
+      context: .                   # backend needs repo root as context
       dockerfile: backend/Dockerfile
-      args:
-        BUILD_ID: ${BUILD_ID}
     container_name: leonardo-backend
+    env_file:
+      - .env
+    environment:
+      BACKEND_HOST: ${BACKEND_HOST:-0.0.0.0}
+      BACKEND_PORT: ${BACKEND_PORT:-10001}
+      MCP_NETBOX_URL: ${MCP_NETBOX_URL}
+      GENAI_API_BASE: ${GENAI_API_BASE}
     ports:
       - "10001:10001"
-    restart: unless-stopped
-    environment:
-      PYTHONUNBUFFERED: "1"
-      BUILD_ID: ${BUILD_ID}
- 
-  frontend:
+    networks:
+      - default
+      - genai_local-genai-network
+
+  leonardo-frontend:
     build:
-      context: ./frontend
+      context: ./frontend          # frontend needs its folder as context
       dockerfile: Dockerfile
-      args:
-        BUILD_ID: ${BUILD_ID}
     container_name: leonardo-frontend
+    env_file:
+      - .env
+    environment:
+      NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:10001}
     depends_on:
-      - backend
+      - leonardo-backend
     ports:
       - "10201:80"
-    restart: unless-stopped
-    environment:
-      BUILD_ID: ${BUILD_ID}
+    networks:
+      - default
+      - genai_local-genai-network
+
+networks:
+  genai_local-genai-network:
+    external: true

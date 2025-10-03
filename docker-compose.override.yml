@@ -1,13 +1,28 @@
 services:
   leonardo-backend:
+    environment:
+      # you already had these
+      MCP_NETBOX_URL: ${MCP_NETBOX_URL}
+      GENAI_API_BASE: ${GENAI_API_BASE}
+
+      # NEW: allow backend to talk directly to NetBox if MCP tool is missing
+      NETBOX_DIRECT_BASE: "http://netbox-netbox-1:8080"
+      NETBOX_TOKEN: ${NETBOX_TOKEN}
     networks:
       - default
-      - genai_local-genai-network   # <- join GenAI network so DNS "mcp-netbox" works
+      - genai_local-genai-network
+      - netbox_default    # NEW: join NetBox's Docker network so the hostname above resolves
+
+  leonardo-frontend:
     environment:
-      MCP_NETBOX_URL: "http://mcp-netbox:8090/mcp"  # base URL of the MCP server
-      # Optional: if you prefer routing via GenAI backend later, add this too:
-      GENAI_API_BASE: "http://genai-backend:8000"
+      # you already had this
+      NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL}
+    networks:
+      - default
+      - genai_local-genai-network
 
 networks:
   genai_local-genai-network:
+    external: true
+  netbox_default:           # NEW: this is the network created by your NetBox stack
     external: true
